@@ -5,7 +5,7 @@
 
 
 
-typedef struct nl_table_t {
+typedef struct nl_metatable_t {
     shape* layout;
     value* pvals;
     value* ivals;
@@ -13,4 +13,6 @@ typedef struct nl_table_t {
     uint32_t prop_cap;      // property capacity
     uint32_t item_n;        // item value count
     uint32_t item_cap;      // item capacity
-} table;
+} metatable;
+
+void metatable_del(void* t);

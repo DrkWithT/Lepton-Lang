@@ -3,6 +3,7 @@
 #include "dynbuf.h"
 #include "pool.h"
 #include "value.h"
+#include "table.h"
 #include "ic.h"
 
 
@@ -64,7 +65,7 @@ void chunk_del(void* c);
 
 typedef struct nl_program_t {
     ent_pool pool_s;    // interned strings
-    ent_pool pool_o;    // objects
+    ent_pool pool_o;    // objects (metatables)
     ent_pool pool_c;    // closures
     dynbuf chunks;
     value* gv;          // global values buffer

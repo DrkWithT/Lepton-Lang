@@ -129,5 +129,5 @@ int main(int argc, const char* argv[]) {
     ast_unit_del(&ast);
     string_del(&loaded_src);
 
-    return ast_ok && bc_ok ? 0 : 1;
+    return (ast_ok && bc_ok) ? 0 : 1;
 }

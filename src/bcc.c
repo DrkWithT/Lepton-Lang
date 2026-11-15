@@ -1272,7 +1272,7 @@ bcc_state nl_bcc_state_new(int32_t max_strings, int32_t max_objects, int32_t max
 
     auto loop_buf = dynbuf_new(sizeof(bcc_loopinfo), 4, bcc_loopinfo_del);
 
-    ent_pool temp_pool_s = ent_pool_new(sizeof(string), max_strings, string_del), temp_pool_o = ent_pool_new(sizeof(table), max_objects, nullptr), temp_pool_c = ent_pool_new(sizeof(closure), max_closures, nullptr);
+    ent_pool temp_pool_s = ent_pool_new(sizeof(string), max_strings, string_del), temp_pool_o = ent_pool_new(sizeof(metatable), max_objects, metatable_del), temp_pool_c = ent_pool_new(sizeof(closure), max_closures, nullptr);
 
     bcc_state temp_bccs = {
         .scopes = scope_buf,
