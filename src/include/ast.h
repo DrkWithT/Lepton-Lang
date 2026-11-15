@@ -31,7 +31,7 @@ typedef enum nl_ast_op : uint8_t {
     nl_ast_op_none,
     nl_ast_op_nullish,
     nl_ast_op_negate,
-    nl_ast_op_logical_negate,
+    nl_ast_op_logical_negate,   // `!` operator
     nl_ast_op_coalesce,
     nl_ast_op_mod,
     nl_ast_op_mul,
@@ -44,7 +44,6 @@ typedef enum nl_ast_op : uint8_t {
     nl_ast_op_gt,
     nl_ast_op_lte,
     nl_ast_op_gte,
-    nl_ast_op_bang,
     nl_ast_op_and,
     nl_ast_op_or,
     nl_ast_op_bind,

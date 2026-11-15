@@ -9,15 +9,18 @@
 
 typedef enum nl_op_t : uint8_t {
     nl_op_nop,          // pc++
-    nl_op_store_nil,
-    nl_op_store_true,
-    nl_op_store_false,
+    nl_op_store_nil,    // store_nil dest
+    nl_op_store_bool,   // store_bool dest u8-imm
     nl_op_swap_r,       // swap dest src
     nl_op_loadi_u16,    // mov dest (i32)u16-imm
     nl_op_mov_rk,       // mov dest constant-id
     nl_op_mov_rr,       // mov dest src
-    nl_op_ld_upval,     // load_upval dest <upval-ID>
-    nl_op_sto_upval,    // store_upval <upval-ID> src
+    nl_op_mov_rg,       // mov_global dest <global-ID>
+    nl_op_sto_arg,      // mov_arg_slot <arg-ID (up to 255)> src
+    nl_op_ld_arg,       // load_arg_slot dest <arg-ID>
+    nl_op_ld_upval,     // load_upvar dest <upval-ID> <upval-CID>
+    nl_op_sto_upval,    // store_upvar <upval-ID> <upval-CID> src
+    nl_op_ld_accr,      // load_accr dest
     nl_op_test_nil,     // test_nil dest
     nl_op_neg_num,      // numeric_neg dest
     nl_op_neg_log,      // logical_neg dest
@@ -32,13 +35,13 @@ typedef enum nl_op_t : uint8_t {
     nl_op_gte,
     nl_op_eq,
     nl_op_ne,
-    nl_op_jmp_nil,      // jmp_nil src pc
+    nl_op_jmp_not_nil,  // jmp_not_nil src pc
     nl_op_jmp_if,       // jmp_if src pc
     nl_op_jmp_else,     // jmp_else src pc
     nl_op_jmp,          // jmp pc
-    nl_op_mk_closure,   // mk_closure dest
-    nl_op_call,         // call dest-reg func-reg argc
-    nl_op_call_n,       // call_native dest-reg native-id-imm argc
+    nl_op_mk_closure,   // mk_closure dest <chunk-ID>
+    nl_op_call,         // call func-reg argc -> `accr`
+    nl_op_call_n,       // call_native native-id-imm argc -> `accr`
     nl_op_ret,          // ret src
 } op;
 
@@ -65,9 +68,14 @@ typedef struct nl_program_t {
     ent_pool pool_c;    // closures
     dynbuf chunks;
     value* gv;          // global values buffer
-    uint16_t gc_len;
-    uint16_t gc_cap;
+    uint16_t gv_len;
+    uint16_t gv_cap;
     uint16_t entry_cid;
 } program;
 
+[[nodiscard]]
+program program_dud();
+
 void program_del(void* pg);
+
+void program_output(FILE* os, const program* pg);

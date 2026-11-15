@@ -38,6 +38,9 @@ static inline size_t str_size(const str* self) {
 }
 
 [[nodiscard]]
+int32_t str_index_of(const str* self, char c);
+
+[[nodiscard]]
 bool str_eq_raw(const str* self, const char* cstr, size_t n);
 
 [[nodiscard]]
@@ -45,6 +48,11 @@ bool str_eq_str(const str* self, const str* rhs);
 
 void str_output(FILE* fs, const str* s);
 
+[[nodiscard]]
+int32_t str_to_i32(const str* s);
+
+[[nodiscard]]
+float str_to_f32(const str* s);
 
 
 /// owning, ASCII string

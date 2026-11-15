@@ -1,6 +1,6 @@
+#include <math.h>
 #include "basics.h"
 #include "strs.h"
-
 
 
 static constexpr str dud_str_v = {
@@ -9,8 +9,10 @@ static constexpr str dud_str_v = {
 };
 
 static constexpr size_t defaulted_str_length = 16;
-
 static constexpr size_t maximal_str_length = 1024;
+static constexpr int16_t max_str_to_i_scan = 13;
+static constexpr int32_t str_to_i32_base = 10;
+static constexpr float str_to_f32_base = 10.0f;
 
 
 
@@ -46,6 +48,15 @@ str str_from_string(const string* s) {
 }
 
 [[nodiscard]]
+int32_t str_index_of(const str* self, char c) {
+    int32_t i = 0;
+
+    for (; i < self->n && self->s[i] != c; i++) {}
+
+    return (i < self->n) ? i : -1;
+}
+
+[[nodiscard]]
 bool str_eq_raw(const str* self, const char* cstr, size_t n) {
     if (!self->s && !cstr) {
         return true;
@@ -73,6 +84,54 @@ bool str_eq_str(const str* self, const str* rhs) {
 
 void str_output(FILE* fs, const str* s) {
     fwrite(s->s, sizeof(char), s->n, fs);
+}
+
+[[nodiscard]]
+int32_t str_to_i32(const str* s) {
+    if (str_size(s) > max_str_to_i_scan) {
+        return 0;
+    }
+
+    int32_t base = 1;
+    int32_t n = 0;
+
+    for (int16_t digit_pos = 0; digit_pos < s->n; digit_pos++, base *= str_to_i32_base) {
+        n += (int32_t) s->s[digit_pos] * base;
+    }
+
+    return n;
+}
+
+// ! IMPORTANT: This is NOT meant to be robust. It's only for decoding lexemes in the bytecode compiler into f32 values for constants.
+// ! SAFETY: `s` must be a valid base-10 digit literal with at most 1 dot.
+[[nodiscard]]
+float str_to_f32(const str* s) {
+    auto dot_it = strnstr(s->s, (const char[]) { '.', '\0' }, s->n);
+    // ! This calculation assumes strs for lexemes have grammar `DIGIT+ '.' DIGIT*`. Since the 1st whole digit is not a multiple of 10, subtract 1 extra power level from the digit count between the dot and the highest digit.
+    int32_t max_pow10 = (s->s + s->n - 2) - dot_it;
+
+    float n = 0.0f;
+    float base = powf(10.0f, (float) max_pow10);
+
+    auto s_rev_it = s->s + s->n - 1;
+    const auto s_rev_it_end = s->s;
+
+    for (; s_rev_it >= s_rev_it_end && s_rev_it != dot_it; s_rev_it--, base /= str_to_f32_base) {
+        n += ((float) *s_rev_it) * base;
+    }
+
+    if (s_rev_it == s_rev_it_end) {
+        return n;
+    } else {
+        // ! Skip '.' if it exists.
+        s_rev_it--;
+    }
+
+    for (; s_rev_it >= s_rev_it_end; s_rev_it--, base /= str_to_f32_base) {
+        n += ((float) *s_rev_it) * base;
+    }
+
+    return n;
 }
 
 
