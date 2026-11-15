@@ -86,11 +86,15 @@ void ent_pool_erase(ent_pool* self, int32_t cell_id) {
         NL_PANIC("Expected ID between [0; max_id) passed to ent_pool_erase()!", __FILE__, __LINE__)
     }
 
-    self->deleter(dynbuf_get_mut(&self->mem, cell_id));
-    dynbuf_push(&self->free_ids, &cell_id);
+    if (self->deleter != nullptr) {
+        self->deleter(dynbuf_get_mut(&self->mem, cell_id));
+        dynbuf_push(&self->free_ids, &cell_id);
+    }
 }
 
 void ent_pool_erase_unchecked(ent_pool* self, int32_t cell_id) {
-    self->deleter(dynbuf_get_mut(&self->mem, cell_id));
-    dynbuf_push(&self->free_ids, &cell_id);
+    if (self->deleter != nullptr) {
+        self->deleter(dynbuf_get_mut(&self->mem, cell_id));
+        dynbuf_push(&self->free_ids, &cell_id);
+    }
 }

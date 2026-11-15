@@ -382,13 +382,12 @@ ast_node* nl_parse_coalesce(parser* p, const str* source) {
         }
 
         lhs_ptr = nl_make_ast_ptr((ast_node) {
-            .data.bin_n = {
+            .data.bin_l = {
                 .lhs = lhs_ptr,
                 .rhs = rhs_ptr,
-                .is_ltr = true,
                 .op = nl_ast_op_coalesce,
             },
-            .tag = nl_ast_binary_normal
+            .tag = nl_ast_binary_logical
         });
     }
 

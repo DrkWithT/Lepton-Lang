@@ -1,6 +1,8 @@
 `
     this is
-    a block comment
+    a block comment...
+
+    block statements do not create a new frame but store their last value in a special register
 `
 
 def a = 42, b = true, n = nil;
