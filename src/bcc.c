@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include "bcc.h"
 #include "var_scope.h"
+#include "closures.h"
+
 
 
 static constexpr size_t bcc_initial_chunk_cap_v = 24;
@@ -9,6 +11,9 @@ static constexpr size_t bcc_initial_chunk_ic_cap_v = 2;
 static constexpr size_t bcc_initial_chunk_var_ent_cap_v = 2;
 static constexpr size_t bcc_bc_byte_sz = sizeof(uint8_t);
 static constexpr uint16_t bcc_bc_max_cap_v = 0xffff;
+static constexpr uint16_t bcc_initial_global_cap_v = 8;
+static constexpr uint16_t bcc_max_arity = 256;
+static constexpr uint16_t bcc_max_errors = 3;
 
 [[nodiscard]]
 bool bcc_flag_check_n(uint16_t flags, const uint16_t* checks, uint8_t n) {
@@ -39,8 +44,8 @@ uint16_t bcc_flag_unset_n(uint16_t flags, const uint16_t* omits, uint8_t n) {
     return flags;
 }
 
+static const auto bcc_dud_result_v = (bcc_result) {.n = 0, .flags = 0x00, .cid = 0x00, .domain = nl_bcc_sym_invalid};
 
-static const auto bcc_dud_result_v = (bcc_result) {.n = 0, .flags = 0x00, .domain = nl_bcc_sym_invalid};
 
 
 typedef bcc_result(*bcc_emitter_t)(bcc_state* bcc, const ast_node* node, uint16_t flags);
@@ -103,12 +108,22 @@ const bcc_emitter_t bcc_emitters[] = {
     bcc_emit_expr_stmt,
 };
 
+static inline bcc_result bcc_emit_next(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    return bcc_emitters[node->tag](bcc, node, flags);
+}
+
 void symscope_del(void* ssc) {
     auto symscope_self = (symscope*)ssc;
 
     dynbuf_del(&symscope_self->infos);
 }
 
+void bcc_loopinfo_del(void* lp_info) {
+    auto loop_self = (bcc_loopinfo*) lp_info;
+
+    dynbuf_del(&loop_self->exit_iposv);
+    dynbuf_del(&loop_self->rep_iposv);
+}
 
 
 // ! IMPORTANT: This returns the parent chunk ID before entering this new child chunk.
@@ -141,13 +156,13 @@ static inline void bcc_resume_chunk(bcc_state* bcc, uint16_t cid) {
 }
 
 [[nodiscard]]
-static inline uint16_t nl_bcc_next_ip(const bcc_state* bcc) {
+static inline uint16_t bcc_next_ip(const bcc_state* bcc) {
     const auto curr_chunk = (const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid);
 
     return curr_chunk->code_len;
 }
 
-void nl_bcc_emit_byte(bcc_state* bcc, uint8_t b) {
+void bcc_emit_byte(bcc_state* bcc, uint8_t b) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
     const uint16_t next_len = curr_chunk->code_len;
     const uint16_t curr_cap = curr_chunk->code_cap;
@@ -172,46 +187,43 @@ void nl_bcc_emit_byte(bcc_state* bcc, uint8_t b) {
     curr_chunk->code_len++;
 }
 
-[[nodiscard]]
-uint16_t nl_bcc_emit_inst_unary(bcc_state* bcc, op o, uint16_t a0) {
+uint16_t bcc_emit_inst_unary(bcc_state* bcc, op o, uint16_t a0) {
     const uint16_t bc_ipos = ((const chunk*)dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
 
-    nl_bcc_emit_byte(bcc, (uint8_t)o);
-    nl_bcc_emit_byte(bcc, (uint8_t)(a0 & 0xff));
-    nl_bcc_emit_byte(bcc, (uint8_t)((a0 & 0xff00) >> 8));
+    bcc_emit_byte(bcc, (uint8_t)o);
+    bcc_emit_byte(bcc, (uint8_t)(a0 & 0xff));
+    bcc_emit_byte(bcc, (uint8_t)((a0 & 0xff00) >> 8));
 
     return bc_ipos;
 }
 
-[[nodiscard]]
-uint16_t nl_bcc_emit_inst_binary(bcc_state* bcc, op o, uint16_t a0, uint16_t a1) {
+uint16_t bcc_emit_inst_binary(bcc_state* bcc, op o, uint16_t a0, uint16_t a1) {
     const uint16_t bc_ipos = ((const chunk*)dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
 
-    nl_bcc_emit_byte(bcc, (uint8_t)o);
-    nl_bcc_emit_byte(bcc, (uint8_t)(a0 & 0xff));
-    nl_bcc_emit_byte(bcc, (uint8_t)((a0 & 0xff00) >> 8));
-    nl_bcc_emit_byte(bcc, (uint8_t)(a1 & 0xff));
-    nl_bcc_emit_byte(bcc, (uint8_t)((a1 & 0xff00) >> 8));
+    bcc_emit_byte(bcc, (uint8_t)o);
+    bcc_emit_byte(bcc, (uint8_t)(a0 & 0xff));
+    bcc_emit_byte(bcc, (uint8_t)((a0 & 0xff00) >> 8));
+    bcc_emit_byte(bcc, (uint8_t)(a1 & 0xff));
+    bcc_emit_byte(bcc, (uint8_t)((a1 & 0xff00) >> 8));
 
     return bc_ipos;
 }
 
-[[nodiscard]]
-uint16_t nl_bcc_emit_inst_ternary(bcc_state* bcc, op o, uint16_t a0, uint16_t a1, uint16_t a2) {
+uint16_t bcc_emit_inst_ternary(bcc_state* bcc, op o, uint16_t a0, uint16_t a1, uint16_t a2) {
     const uint16_t bc_ipos = ((const chunk*)dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
 
-    nl_bcc_emit_byte(bcc, (uint8_t)o);
-    nl_bcc_emit_byte(bcc, (uint8_t)(a0 & 0xff));
-    nl_bcc_emit_byte(bcc, (uint8_t)((a0 & 0xff00) >> 8));
-    nl_bcc_emit_byte(bcc, (uint8_t)(a1 & 0xff));
-    nl_bcc_emit_byte(bcc, (uint8_t)((a1 & 0xff00) >> 8));
-    nl_bcc_emit_byte(bcc, (uint8_t)(a2 & 0xff));
-    nl_bcc_emit_byte(bcc, (uint8_t)((a2 & 0xff00) >> 8));
+    bcc_emit_byte(bcc, (uint8_t)o);
+    bcc_emit_byte(bcc, (uint8_t)(a0 & 0xff));
+    bcc_emit_byte(bcc, (uint8_t)((a0 & 0xff00) >> 8));
+    bcc_emit_byte(bcc, (uint8_t)(a1 & 0xff));
+    bcc_emit_byte(bcc, (uint8_t)((a1 & 0xff00) >> 8));
+    bcc_emit_byte(bcc, (uint8_t)(a2 & 0xff));
+    bcc_emit_byte(bcc, (uint8_t)((a2 & 0xff00) >> 8));
 
     return bc_ipos;
 }
 
-void nl_patch_cond_jump(bcc_state* bcc, uint16_t target_ip, uint16_t dest_ipos) {
+void bcc_patch_cond_jump(bcc_state* bcc, uint16_t target_ip, uint16_t dest_ipos) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
     const op checked_opcode = curr_chunk->bc[target_ip];
 
@@ -222,7 +234,7 @@ void nl_patch_cond_jump(bcc_state* bcc, uint16_t target_ip, uint16_t dest_ipos) 
     }
 }
 
-void nl_patch_jump(bcc_state* bcc, uint16_t target_ip, uint16_t dest_ipos) {
+void bcc_patch_jump(bcc_state* bcc, uint16_t target_ip, uint16_t dest_ipos) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
     const op checked_opcode = curr_chunk->bc[target_ip];
 
@@ -258,7 +270,7 @@ void nl_bcc_place_ic(bcc_state* bcc, uint16_t ip, ic temp_ic) {
     curr_chunk->ic_len++;
 }
 
-void nl_bcc_start_scope(bcc_state* bcc, str scope_name) {
+void bcc_start_scope(bcc_state* bcc, str scope_name) {
     symscope next_scope = {
         .infos = dynbuf_new(sizeof(syminfo), 8, nullptr),
         .name = scope_name,
@@ -270,8 +282,41 @@ void nl_bcc_start_scope(bcc_state* bcc, str scope_name) {
     dynbuf_push(&bcc->scopes, &next_scope);
 }
 
-void nl_bcc_end_scope(bcc_state* bcc) {
+void bcc_end_scope(bcc_state* bcc) {
     dynbuf_pop(&bcc->scopes);
+}
+
+static inline void bcc_update_curr_rc(bcc_state* bcc, uint16_t next_rc) {
+    auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
+
+    if (next_rc > curr_chunk->regs_n) {
+        curr_chunk->regs_n = next_rc;
+    }
+}
+
+[[nodiscard]]
+int32_t bcc_normalize_to_local_reg(bcc_state* bcc, bcc_result r) {
+    const auto r_tag = r.domain; // todo: add u16-max check for reserved `top_reg`!
+
+    if (r_tag == nl_bcc_sym_acc_r) {
+        const auto temp_local_r = bcc->top_reg++;
+
+        bcc_update_curr_rc(bcc, bcc->top_reg);
+        bcc_emit_inst_unary(bcc, nl_op_ld_accr, temp_local_r);
+
+        return temp_local_r;
+    } else if (r_tag == nl_bcc_sym_local_r) {
+        return r.n;
+    } else if (r_tag == nl_bcc_sym_foreign_local) {
+        const auto temp_local_r = bcc->top_reg++;
+
+        bcc_update_curr_rc(bcc, bcc->top_reg);
+        bcc_emit_inst_ternary(bcc, nl_op_ld_upval, temp_local_r, r.n, r.cid);
+
+        return temp_local_r;
+    }
+
+    return -1;
 }
 
 static inline void nl_bcc_report_err(bcc_state* bcc, const char* msg, uint16_t line, uint16_t col) {
@@ -325,6 +370,10 @@ const syminfo* nl_bcc_push_symbol_to(bcc_state* bcc, syminfo info, char should_u
 uint16_t bcc_push_konst(bcc_state* bcc, value v) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
 
+    for (int32_t pre_k_id = 0; pre_k_id < curr_chunk->k_len; pre_k_id++) {
+        if (!memcmp(curr_chunk->kd + pre_k_id, &v, sizeof(value))) return pre_k_id;
+    }
+
     const auto next_k_id = curr_chunk->k_len;
     const auto curr_k_cap = curr_chunk->k_cap;
     const auto new_k_cap = curr_chunk->k_cap * 2;
@@ -348,25 +397,24 @@ uint16_t bcc_push_konst(bcc_state* bcc, value v) {
 
 [[nodiscard]]
 const syminfo* nl_bcc_record_string_k(bcc_state* bcc, str s) {
-    const auto pre_found_info = nl_bcc_lookup_symbol(bcc, s, nl_bcc_sym_k, 'G');
+    const auto pre_found_info = nl_bcc_lookup_symbol(bcc, (str) {.s = s.s - 1, .n = s.n + 2}, nl_bcc_sym_k, 'L'); // ! include quotes of string lexeme to distinguish string literals from naked words
     if (pre_found_info) {
         return pre_found_info;
     }
 
     // ? All string literals are global, so use the bottom-most, global scope context to track each.
-    auto curr_scope = (symscope*) dynbuf_get_mut(&bcc->scopes, 0);
     auto s_owned = string_from_str(&s);
     auto interned_sd = ent_pool_add(&bcc->pool_s, &s_owned);
 
     return nl_bcc_push_symbol_to(bcc, (syminfo) {
-        .name = s,
+        .name = (str) {.s = s.s - 1, .n = s.n + 2}, // ! include quotes of string lexeme to distinguish string literals from naked words
         .n = bcc_push_konst(bcc, (value) {
             .n = interned_sd.id,
             .tag = nl_vtag_str
         }),
-        .cid = 0,
+        .cid = bcc->curr_cid,
         .tag = nl_bcc_sym_k
-    }, 'G');
+    }, 'L');
 }
 
 [[nodiscard]]
@@ -419,40 +467,65 @@ const syminfo* nl_bcc_record_local(bcc_state* bcc, str name) {
         .n = top_reg_for_local,
         .cid = bcc->curr_cid,
         .tag = nl_bcc_sym_local_r
-    }, 'G');
+    }, 'L');
 }
 
 // ! IMPORTANT: upvalues are pre-recorded per chunk in vinfos as a var_ent for upvalue having `cid = assoc-scope -> assoc-function -> func-chunk-ID` and local-reg "offset"
-[[nodiscard]]
-const var_ent* nl_bcc_push_chunk_var_ent(bcc_state* bcc, var_ent entry) {
+void bcc_save_chunk_var_ent(bcc_state* bcc, var_ent entry) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
 
-    return (const var_ent*) dynbuf_push(&curr_chunk->vinfo, &entry);
+    dynbuf_push(&curr_chunk->vinfo, &entry);
 }
 
 
 [[nodiscard]]
 bcc_result bcc_emit_invalid(bcc_state* bcc, const ast_node* node, uint16_t flags) {
-    return (bcc_result) {
-        .n = 0,
-        .flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_ok }, 1),
-        .domain = nl_bcc_sym_invalid,
-    };
+    return bcc_dud_result_v;
 }
 
 [[nodiscard]]
 bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_t flags) {
     const syminfo* found_named_info = nullptr;
+    syminfo actual_info = {
+        .name = str_dud(),
+        .n = 0,
+        .cid = 0,
+        .tag = nl_bcc_sym_invalid
+    };
     const auto ident_str = *identifier;
 
     if ((found_named_info = nl_bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_global_k, 'G')) != nullptr) {
-        ; // ...
-    } else if ((found_named_info = nl_bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_k, 'L'))) {
-        ; // ...
-    } else if ((found_named_info = nl_bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'L'))) {
-        ; // ...
-    } else if ((found_named_info = nl_bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'B'))) {
-        ; // ...
+        if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
+            bcc_emit_inst_binary(bcc, nl_op_mov_rg, bcc->top_reg, found_named_info->n);
+            actual_info.n = bcc->top_reg++;
+            actual_info.cid = bcc->curr_cid;
+            actual_info.tag = nl_bcc_sym_local_r;
+        }
+    } else if ((found_named_info = nl_bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'L')) != nullptr) {
+        if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
+            bcc_emit_inst_binary(bcc, nl_op_mov_rr, bcc->top_reg, found_named_info->n);
+            actual_info.n = bcc->top_reg++;
+            actual_info.cid = bcc->curr_cid;
+            actual_info.tag = nl_bcc_sym_local_r;
+        } else {
+            actual_info = *found_named_info;
+        }
+    } else if ((found_named_info = nl_bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'B')) != nullptr) {
+        if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
+            bcc_emit_inst_ternary(bcc, nl_op_ld_upval, bcc->top_reg, found_named_info->n, found_named_info->cid);
+
+            actual_info.n = bcc->top_reg++;
+            actual_info.cid = bcc->curr_cid;
+            actual_info.tag = nl_bcc_sym_local_r;
+        } else if (found_named_info->cid == bcc->curr_cid) {
+            actual_info.n = bcc->top_reg++;
+            actual_info.cid = bcc->curr_cid;
+            actual_info.tag = nl_bcc_sym_local_r;
+        } else {
+            actual_info.n = found_named_info->n;
+            actual_info.cid = found_named_info->cid;
+            actual_info.tag = nl_bcc_sym_foreign_local;
+        }
     }
 
     if (!found_named_info) {
@@ -460,76 +533,841 @@ bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_
         fprintf(stdout, "\tnote: was the name below defined in the function / outer scopes? '\x1b[1;31m");
         str_output(stdout, identifier);
         fprintf(stdout, "\x1b[0m'\n\n");
+
+        return bcc_dud_result_v;
+    } else if (actual_info.tag == nl_bcc_sym_invalid) {
+        nl_bcc_report_err(bcc, "Found a wrongly-resolved name. Also, globals are non-assignable constants.", bcc->line, bcc->col);
+        fprintf(stdout, "\tnote: check definition of name '\x1b[1;31m");
+        str_output(stdout, identifier);
+        fprintf(stdout, "\x1b[0m'\n\n");
+
         return bcc_dud_result_v;
     }
 
+    bcc_update_curr_rc(bcc, bcc->top_reg);
+
+    // ! IMPORTANT: assume that only property-accessed and variable-name locations are assignable. This should be enforced via checking `ast_node::tag` for literal-ident or prop-access in `bcc_emit_assignment()`
     return (bcc_result) {
-        .n = found_named_info->n,
+        .n = actual_info.n,
         .flags = flags,
-        .domain = found_named_info->tag
+        .cid = actual_info.cid,
+        .domain = actual_info.tag
     };
 }
 
 [[nodiscard]]
-bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto literal_node = &node->data.lit;
+    const auto temp_tk = &literal_node->token;
+    const auto temp_lexeme = tk_get_lexeme(temp_tk, bcc->source);
+
+    bcc->line = temp_tk->line;
+    bcc->col = temp_tk->col;
+
+    switch (temp_tk->tag) {
+        case nl_tk_kw_nil: {
+            bcc_emit_inst_unary(bcc, nl_op_store_nil, bcc->top_reg);
+            bcc_update_curr_rc(bcc, bcc->top_reg + 1);
+
+            return (bcc_result) {
+                .n = bcc->top_reg++,
+                .flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1),
+                .cid = 0,
+                .domain = nl_bcc_sym_local_r,
+            };
+        }
+        case nl_tk_kw_true: case nl_tk_kw_false: {
+            bcc_emit_inst_binary(bcc, nl_op_store_bool, bcc->top_reg, temp_tk->tag == nl_tk_kw_true);
+            bcc_update_curr_rc(bcc, bcc->top_reg + 1);
+
+            return (bcc_result) {
+                .n = bcc->top_reg++,
+                .flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1),
+                .cid = 0,
+                .domain = nl_bcc_sym_local_r,
+            };
+        }
+        case nl_tk_identifier: {
+            return bcc_preemit_identifier(bcc, &temp_lexeme, flags);
+        }
+        case nl_tk_lt_int: {
+            const auto konst_i32_id = bcc_push_konst(bcc, (value) {
+                .n = str_to_i32(&temp_lexeme),
+                .tag = nl_vtag_int
+            });
+
+            bcc_emit_inst_binary(bcc, nl_op_mov_rk, bcc->top_reg, konst_i32_id);
+            bcc_update_curr_rc(bcc, bcc->top_reg + 1);
+
+            return (bcc_result) {
+                .n = bcc->top_reg++,
+                .flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1),
+                .cid = 0,
+                .domain = nl_bcc_sym_local_r
+            };
+        }
+        case nl_tk_lt_num: {
+            const auto k_f32_id = bcc_push_konst(bcc, (value) {
+                .f = str_to_f32(&temp_lexeme),
+                .tag = nl_vtag_num
+            });
+
+            bcc_emit_inst_binary(bcc, nl_op_mov_rk, bcc->top_reg, k_f32_id);
+            bcc_update_curr_rc(bcc, bcc->top_reg + 1);
+
+            return (bcc_result) {
+                .n = bcc->top_reg++,
+                .flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1),
+                .cid = 0,
+                .domain = nl_bcc_sym_local_r
+            };
+        }
+        case nl_tk_lt_plain_str: {
+            const auto plain_str_lit_info = nl_bcc_record_string_k(bcc, temp_lexeme);
+
+            bcc_emit_inst_binary(bcc, nl_op_mov_rk, bcc->top_reg, plain_str_lit_info->n);
+            bcc_update_curr_rc(bcc, bcc->top_reg + 1);
+
+            return (bcc_result) {
+                .n = bcc->top_reg++,
+                .flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1),
+                .cid = 0,
+                .domain = nl_bcc_sym_local_r
+            };
+        }
+        case nl_tk_lt_esc_str:
+        default: {
+            nl_bcc_report_err(bcc, "Unsupported literal found here: expected nil, boolean, name, number, or unescaped string.", bcc->line, bcc->col);
+            return bcc_dud_result_v;
+        }
+    }
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_literal_array(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_literal_array(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    return bcc_dud_result_v; // todo: implement
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_literal_table(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_literal_table(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    return bcc_dud_result_v; // todo: implement
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto lambda_node = &node->data.fun;
+    const auto lambda_params = (const tk*) lambda_node->param_tkv.data;
+    const uint16_t lambda_arity = lambda_node->param_tkv.n;
+    const auto lambda_body = lambda_node->body;
+    const auto lambda_line = lambda_params->line, lambda_col = lambda_params->col;
+
+    // ! Generate anonymous function name for user convenience if an error happens.
+    auto internal_lambda_name = string_new("lambda-", 7);
+
+    {
+        char line_text[7] = {0};
+        char col_text[7] = {0};
+        const auto lambda_line_cc = snprintf(line_text, 7, "L%u", lambda_line);
+        const auto lambda_col_cc = snprintf(col_text, 7, "C%u", lambda_col);
+
+        string_append_raw(&internal_lambda_name, line_text, lambda_line_cc);
+        string_append_raw(&internal_lambda_name, col_text, lambda_col_cc);
+    }
+
+    const auto internal_lambda_reg = bcc->top_reg++;
+    const uint16_t prev_cid = bcc->curr_cid;
+
+    // ! Begin symbol scope & code to track & generate respectively.
+    const uint16_t lambda_cid = bcc_start_chunk(bcc);
+    bcc->curr_cid = lambda_cid;
+    bcc->top_reg = 0;
+
+    bcc_start_scope(bcc, str_from_string(&internal_lambda_name));
+
+    for (uint16_t param_pos = 0; param_pos < lambda_arity; param_pos++) {
+        const auto param_name = tk_get_lexeme(lambda_params + param_pos, bcc->source);
+        const auto param_local_reg = nl_bcc_record_local(bcc, param_name)->n;
+
+        bcc_emit_inst_binary(bcc, nl_op_ld_arg, param_local_reg, param_pos);
+        bcc_save_chunk_var_ent(bcc, (var_ent) {
+            .id = param_local_reg,
+            .cid = bcc->curr_cid,
+            .tag = nl_var_local
+        });
+    }
+
+    const auto body_flags = bcc_flag_set_n(bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1), (uint16_t[]) { nl_bcc_cf_started_fun_body }, 1);
+    const auto checked_body_result = bcc_emit_next(bcc, lambda_body, body_flags);
+    if (!bcc_flag_check_n(checked_body_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        string_del(&internal_lambda_name);
+        chunk_del((chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid));
+        bcc_end_scope(bcc);
+        bcc->curr_cid = prev_cid;
+        bcc->top_reg = internal_lambda_reg;
+
+        return checked_body_result;
+    }
+
+    // ! Put trailing `ret` in case the user forgets to put their result expression. The block emitter should always force its last (result) value into `acc` via `nl_op_ret`.
+    bcc_emit_inst_unary(bcc, nl_op_ret, checked_body_result.n);
+
+    string_del(&internal_lambda_name);
+    bcc_end_scope(bcc);
+    bcc->curr_cid = prev_cid;
+    bcc->top_reg = internal_lambda_reg;
+
+    // ! Emit lambda as temporary into parent scope's register for later use.
+    bcc_emit_inst_binary(bcc, nl_op_mk_closure, internal_lambda_reg, lambda_cid);
+    bcc_update_curr_rc(bcc, bcc->top_reg);
+
+    return (bcc_result) {
+        .n = internal_lambda_reg,
+        .flags = flags,
+        .cid = bcc->curr_cid,
+        .domain = nl_bcc_sym_local_r
+    };
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_expr_access(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_expr_access(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    return bcc_dud_result_v; // todo: implement
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_expr_call(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_expr_call(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto call_node = &node->data.call;
+    const auto call_callee = call_node->callee;
+    const auto call_argv = (const ast_node*) call_node->arg_exprs.data;
+    const uint32_t call_argc = call_node->arg_exprs.n;
+
+    if (call_argc > bcc_max_arity) {
+        nl_bcc_report_err(bcc, "The nearby call has more arguments than is supported by the interpreter (255 max).", bcc->line, bcc->col);
+        return bcc_dud_result_v;
+    }
+
+    const auto not_lhs_hints = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
+
+    // ? note: at runtime, each frame tracks the scope (var locator infos), caller & callee base_reg, and corresponding chunk-ID of a callee!
+    // ? 1. emit evaluation of callee value... emit based on if a foreign / local reg is yielded -> local_reg...
+    // ? 2. track N args & each one should be stored with `sto_arg arg-reg-id, arg-temp-reg`...
+    // ? 3. call places its result into an `acc` reg for its result during runtime: it then replaces the reused callee-reg with `acc`... just return a compile-time `bcc_result` with `.tag = nl_bcc_sym_acc_r` to tell other expression emitters where the bytecode gets the result...
+
+    const auto callee_emit_result = bcc_emit_next(bcc, call_callee, not_lhs_hints);
+    if (!bcc_flag_check_n(callee_emit_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return callee_emit_result;
+    }
+
+    const auto callee_line = bcc->line, callee_col = bcc->col;
+
+    for (uint16_t arg_pos = 0; arg_pos < call_argc; arg_pos++) {
+        const auto next_arg_result = bcc_emit_next(bcc, call_argv + arg_pos, not_lhs_hints);
+        if (!bcc_flag_check_n(next_arg_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+            return next_arg_result;
+        }
+
+        bcc_emit_inst_binary(bcc, nl_op_sto_arg, arg_pos, next_arg_result.n);
+    }
+
+    const auto callee_reg = bcc_normalize_to_local_reg(bcc, callee_emit_result);
+
+    if (callee_reg == -1) {
+        nl_bcc_report_err(bcc, "Could not resolve callee's location here.", callee_line, callee_col);
+
+        return bcc_dud_result_v;
+    }
+
+    if (callee_emit_result.domain == nl_bcc_sym_local_r) {
+        bcc_emit_inst_binary(bcc, nl_op_call, callee_emit_result.n, call_argc);
+        bcc_update_curr_rc(bcc, bcc->top_reg);
+    } else if (callee_emit_result.domain == nl_bcc_sym_foreign_local) {
+        bcc_emit_inst_ternary(bcc, nl_op_ld_upval, bcc->top_reg, callee_emit_result.n, callee_emit_result.cid);
+        bcc_emit_inst_binary(bcc, nl_op_call, bcc->top_reg++, call_argc);
+        bcc_update_curr_rc(bcc, bcc->top_reg);
+    }
+
+
+    return (bcc_result) {
+        .n = 0,
+        .cid = 0,
+        .flags = flags,
+        .domain = nl_bcc_sym_acc_r
+    };
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_unary(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_unary(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto unary_node = &node->data.una;
+    const ast_node* inner_expr = unary_node->inner;
+    const auto unary_op = unary_node->op;
+
+    const auto inner_expr_result = bcc_emit_next(bcc, inner_expr, bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1));
+    if (!bcc_flag_check_n(inner_expr_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return inner_expr_result;
+    }
+    const auto inner_expr_line = bcc->line, inner_expr_col = bcc->col;
+
+    op runtime_op = nl_op_nop;
+
+    switch (unary_op) {
+        case nl_ast_op_nullish:
+            runtime_op = nl_op_test_nil;
+            break;
+        case nl_ast_op_negate:
+            runtime_op = nl_op_neg_num;
+            break;
+        case nl_ast_op_logical_negate:
+            runtime_op = nl_op_neg_log;
+            break;
+        default: break; // ! IMPORTANT: this is an unreachable case as the parser enforces the unary grammar rule.
+    }
+
+    const auto resolved_reg = bcc_normalize_to_local_reg(bcc, inner_expr_result);
+
+    if (resolved_reg == -1) {
+        nl_bcc_report_err(bcc, "Failed to resolve inner-expression in the unary-expression around here. Did you define all names within it beforehand?", inner_expr_line, inner_expr_col);
+
+        return bcc_dud_result_v;
+    }
+
+    bcc_emit_inst_unary(bcc, runtime_op, resolved_reg);
+    bcc_update_curr_rc(bcc, bcc->top_reg);
+    bcc->top_reg = resolved_reg + 1;
+
+    return (bcc_result) {
+        .n = resolved_reg,
+        .cid = bcc->curr_cid,
+        .flags = flags,
+        .domain = nl_bcc_sym_local_r
+    };
+}
+
+// todo: later support left-to-right operator checks.
+[[nodiscard]]
+bcc_result bcc_emit_binary_normal(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto binary_node = &node->data.bin_n;
+    const ast_node* binary_lhs = binary_node->lhs, *binary_rhs = binary_node->rhs;
+    const auto binary_op = binary_node->op;
+    const auto binary_operand_flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
+
+    const auto lhs_result = bcc_emit_next(bcc, binary_lhs, binary_operand_flags);
+
+    if (!bcc_flag_check_n(lhs_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return lhs_result;
+    }
+
+    const auto rhs_result = bcc_emit_next(bcc, binary_rhs, binary_operand_flags);
+
+    if (!bcc_flag_check_n(lhs_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return rhs_result;
+    }
+
+    const auto resolved_lhs_reg = bcc_normalize_to_local_reg(bcc, lhs_result), resolved_rhs_reg = bcc_normalize_to_local_reg(bcc, rhs_result);
+
+    bcc_update_curr_rc(bcc, resolved_rhs_reg);
+
+    op runtime_op = nl_op_nop;
+
+    switch (binary_op) {
+        case nl_ast_op_mod: runtime_op = nl_op_mod; break;
+        case nl_ast_op_mul: runtime_op = nl_op_mul; break;
+        case nl_ast_op_div: runtime_op = nl_op_div; break;
+        case nl_ast_op_add: runtime_op = nl_op_add; break;
+        case nl_ast_op_sub: runtime_op = nl_op_sub; break;
+        case nl_ast_op_equals: runtime_op = nl_op_eq; break;
+        case nl_ast_op_bang_equals: runtime_op = nl_op_ne; break;
+        case nl_ast_op_lt: runtime_op = nl_op_lt; break;
+        case nl_ast_op_gt: runtime_op = nl_op_gt; break;
+        case nl_ast_op_lte: runtime_op = nl_op_lte; break;
+        case nl_ast_op_gte: runtime_op = nl_op_gte; break;
+        default: break;
+    }
+
+    bcc_emit_inst_ternary(bcc, runtime_op, resolved_lhs_reg, resolved_lhs_reg, resolved_rhs_reg);
+    bcc_update_curr_rc(bcc, bcc->top_reg);
+    bcc->top_reg = resolved_lhs_reg + 1;
+
+    return (bcc_result) {
+        .n = resolved_lhs_reg,
+        .flags = binary_operand_flags,
+        .cid = bcc->curr_cid,
+        .domain = nl_bcc_sym_local_r
+    };
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_binary_normal(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_binary_logical(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto bin_logical_node = &node->data.bin_l;
+    const ast_node* binary_lhs = bin_logical_node->lhs, *binary_rhs = bin_logical_node->rhs;
+    const auto operand_flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
+    auto binary_logical_runtime_op = nl_op_nop;
+
+    switch (bin_logical_node->op) {
+        case nl_ast_op_coalesce: binary_logical_runtime_op = nl_op_jmp_not_nil; break;
+        case nl_ast_op_and: binary_logical_runtime_op = nl_op_jmp_else; break;
+        case nl_ast_op_or: binary_logical_runtime_op = nl_op_jmp_if; break;
+        default: break;
+    }
+
+    const auto lhs_result = bcc_emit_next(bcc, binary_lhs, operand_flags);
+
+    if (!bcc_flag_check_n(lhs_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return lhs_result;
+    }
+
+    const auto resolved_lhs_reg = bcc_normalize_to_local_reg(bcc, lhs_result);
+    const auto jumper_ip = bcc_emit_inst_binary(bcc, binary_logical_runtime_op, resolved_lhs_reg, -1);
+
+    const auto rhs_result = bcc_emit_next(bcc, binary_rhs, operand_flags);
+
+    if (!bcc_flag_check_n(rhs_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return rhs_result;
+    }
+
+    const auto resolved_rhs_reg = bcc_normalize_to_local_reg(bcc, rhs_result);
+    const auto end_binary_logical_ip = bcc_emit_inst_binary(bcc, nl_op_mov_rr, resolved_lhs_reg, resolved_rhs_reg) + 1;
+
+    bcc_patch_cond_jump(bcc, jumper_ip, end_binary_logical_ip);
+
+    bcc_update_curr_rc(bcc, bcc->top_reg);
+    bcc->top_reg = resolved_lhs_reg + 1;
+
+    return (bcc_result) {
+        .n = resolved_lhs_reg,
+        .cid = bcc->curr_cid,
+        .flags = operand_flags,
+        .domain = nl_bcc_sym_local_r
+    };
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_binary_logical(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_expr_assign(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto assign_node = &node->data.ass;
+    const auto assign_dest = (const ast_node*) assign_node->dest, assign_src = (const ast_node*) assign_node->src;
+    auto assign_runtime_op = nl_op_nop;
+
+    switch (assign_node->op) {
+        case nl_ast_op_bind: assign_runtime_op = nl_op_mov_rr; break;
+        case nl_ast_op_bind_mul: assign_runtime_op = nl_op_mul; break;
+        case nl_ast_op_bind_div: assign_runtime_op = nl_op_div; break;
+        case nl_ast_op_bind_add: assign_runtime_op = nl_op_add; break;
+        case nl_ast_op_bind_sub: assign_runtime_op = nl_op_sub; break;
+        default: break;
+    }
+
+    const auto dest_result = bcc_emit_next(bcc, assign_dest, bcc_flag_set_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1));
+
+    if (!bcc_flag_check_n(dest_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return dest_result;
+    }
+
+    const auto dest_reg = bcc_normalize_to_local_reg(bcc, dest_result);
+    const auto src_result = bcc_emit_next(bcc, assign_src, bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1));
+
+    if (!bcc_flag_check_n(src_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return src_result;
+    }
+
+    const auto src_reg = bcc_normalize_to_local_reg(bcc, src_result);
+
+    if (assign_runtime_op == nl_op_mov_rr) {
+        bcc_emit_inst_binary(bcc, assign_runtime_op, dest_reg, src_reg);
+    } else {
+        bcc_emit_inst_ternary(bcc, assign_runtime_op, dest_reg, dest_reg, src_reg);
+    }
+
+    bcc_update_curr_rc(bcc, src_reg + 1);
+    bcc->top_reg = dest_reg + 1;
+
+    return dest_result;
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_expr_assign(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto cond_node = &node->data.cnd;
+    const auto cond_entries = (const cond_entry*) cond_node->entries.data;
+    const auto cond_entries_n = cond_node->entries.n;
+    const auto cond_item_flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
+    const auto cond_is_expr = cond_node->is_expr;
+
+    auto cond_ending_ips = dynbuf_new(sizeof(uint16_t), 4, nullptr);
+    int32_t reserved_cond_result_reg = -1;
+    const auto cond_result_value_reg = bcc->top_reg;
+
+    for (uint16_t cond_entry_i = 0; cond_entry_i < cond_entries_n; cond_entry_i++) {
+        const ast_node* const cond_entry_check = cond_entries[cond_entry_i].check;
+        const ast_node* const cond_case_resultant = cond_entries[cond_entry_i].body;
+
+        bcc->top_reg = cond_result_value_reg + 1;
+
+        // LOGIC IF condition exists...
+        // - Case 1:
+        /// Emit check and then cond jump... Record the jump location in `next_cond_check_ipos`.
+        /// Emit resulting expr's code and then a jump (which is recorded in `cond_ending_ips`).
+        /// Patch cond jump to go after the result expr's code.
+        // - Case 2:
+        /// Emit resulting expr. only.
+
+        if (cond_entry_check) {
+            const auto entry_check_result = bcc_emit_next(bcc, cond_entry_check, cond_item_flags);
+
+            if (!bcc_flag_check_n(entry_check_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+                return entry_check_result;
+            }
+
+            const auto entry_check_temp_reg = bcc_normalize_to_local_reg(bcc, entry_check_result);
+            const auto entry_checked_jump_ip = bcc_emit_inst_binary(bcc, nl_op_jmp_else, entry_check_temp_reg, 0);
+            const auto entry_resultant_result = bcc_emit_next(bcc, cond_case_resultant, cond_item_flags);
+
+            if (!bcc_flag_check_n(entry_resultant_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+                return entry_resultant_result;
+            }
+
+            const auto entry_resultant_value_reg = bcc_normalize_to_local_reg(bcc, entry_resultant_result);
+            const auto next_exit_jump_ip = bcc_emit_inst_unary(bcc, nl_op_jmp, 0);
+            const auto next_entry_ip = bcc_next_ip(bcc);
+
+            bcc_patch_cond_jump(bcc, entry_checked_jump_ip, next_entry_ip);
+
+            if (cond_is_expr) {
+                bcc_emit_inst_binary(bcc, nl_op_mov_rr, cond_result_value_reg, entry_resultant_value_reg);
+                bcc_update_curr_rc(bcc, bcc->top_reg);
+            }
+        } else {
+            const auto last_entry_resultant_result = bcc_emit_next(bcc, cond_case_resultant, cond_item_flags);
+
+            if (!bcc_flag_check_n(last_entry_resultant_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+                return last_entry_resultant_result;
+            }
+
+            const auto last_entry_result_value_reg = bcc_normalize_to_local_reg(bcc, last_entry_resultant_result);
+
+            if (cond_is_expr) {
+                bcc_emit_inst_binary(bcc, nl_op_mov_rr, cond_result_value_reg, last_entry_result_value_reg);
+                bcc_update_curr_rc(bcc, bcc->top_reg);
+            }
+        }
+    }
+
+    if (cond_is_expr) {
+        return (bcc_result) {
+            .n = cond_result_value_reg,
+            .cid = bcc->curr_cid,
+            .flags = flags,
+            .domain = nl_bcc_sym_local_r
+        };
+    } else {
+        return (bcc_result) {
+            .n = 0,
+            .cid = 0,
+            .flags = flags,
+            .domain = nl_bcc_sym_invalid
+        };
+    }
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_loop(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    nl_bcc_report_err(bcc, "Unsupported syntax found in loop around here during bytecode compilation.", bcc->line, bcc->col);
+
+    return bcc_dud_result_v; // todo: implement later
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_loop(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_loop_abator(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    nl_bcc_report_err(bcc, "Unsupported syntax found in loop around here during bytecode compilation.", bcc->line, bcc->col);
+
+    return bcc_dud_result_v; // todo: implement later
+}
+
+bcc_result bcc_emit_def_binding(bcc_state* bcc, tk name_tk, const ast_node* initializer, uint16_t flags) {
+    const auto var_name = tk_get_lexeme(&name_tk, bcc->source);
+
+    if (bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1)) {
+        const auto reserved_local_result = nl_bcc_record_local(bcc, var_name);
+
+        bcc_emit_inst_unary(bcc, nl_op_store_nil, reserved_local_result->n);
+        bcc_update_curr_rc(bcc, reserved_local_result->n + 1);
+
+        return (bcc_result) {
+            .n = reserved_local_result->n,
+            .cid = reserved_local_result->cid,
+            .flags = flags,
+            .domain = nl_bcc_sym_local_r
+        }; 
+    } else {
+        // ? This info should be already recorded by the previous def visits, so no nullptr checks are needed.
+        const auto found_local_info = nl_bcc_lookup_symbol(bcc, var_name, nl_bcc_sym_local_r, 'L');
+
+        const auto reserved_init_result = bcc_emit_next(bcc, initializer, bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1));
+        const auto reserved_init_reg = bcc_normalize_to_local_reg(bcc, reserved_init_result);
+
+        bcc_emit_inst_binary(bcc, nl_op_mov_rr, found_local_info->n, reserved_init_reg);
+        bcc_update_curr_rc(bcc, bcc->top_reg);
+
+        return (bcc_result) {
+            .n = found_local_info->n,
+            .cid = reserved_init_result.cid,
+            .flags = flags,
+            .domain = nl_bcc_sym_local_r
+        };
+    }
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_loop_abator(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_stmt_def(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto def_node = &node->data.def;
+    const auto def_bindings = (const def_binding*) def_node->bindings.data;
+    const uint16_t def_count = def_node->bindings.n;
+
+    for (uint16_t binding_pos = 0; binding_pos < def_count; binding_pos++) {
+        bcc_emit_def_binding(bcc, def_bindings[binding_pos].name, def_bindings[binding_pos].init, flags);
+    }
+
+    return (bcc_result) {
+        .n = 0,
+        .cid = 0,
+        .flags = flags,
+        .domain = nl_bcc_sym_invalid
+    };
+}
+
+// ! 1. visit only defs to track local regs for variables under `nl_bcc_cf_pass_defs`...
+// ! 2. visit everything else (emit def bindings' initializer movs to prior local regs)...
+// ! 3. If block is a baseline body of a lambda, use a temp register for the last value.
+[[nodiscard]]
+bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto block_node = &node->data.bl;
+    const auto block_items = (const ast_node*) block_node->items.data;
+    const uint16_t block_item_count = block_node->items.n;
+    const auto baseline_flags = bcc_flag_unset_n(flags, (uint16_t[]) {nl_bcc_cf_started_fun_body}, 1);
+
+    bcc_result last_item_result = bcc_dud_result_v;
+    const auto block_baseline_reg = bcc->top_reg; // ? 1st reg used in block expr / body
+    // const auto block_has_trailing_return = (block_item_count > 0) ? block_items[block_item_count - 1].tag == nl_ast_stmt_ret : block_items[0].tag == nl_ast_stmt_ret; // ! maybe use this var later for block rets
+
+    bcc_update_curr_rc(bcc, bcc->top_reg);
+
+    const auto prepass_defs_flags = bcc_flag_set_n(baseline_flags, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1);
+
+    for (uint16_t defs_item_pos = 0; defs_item_pos < block_item_count; defs_item_pos++) {
+        const auto item_tag = (block_items + defs_item_pos)->tag;
+
+        if (item_tag == nl_ast_stmt_def || item_tag == nl_ast_block) {
+            const auto temp_item_result_pass_1 = bcc_emit_next(bcc, block_items + defs_item_pos, prepass_defs_flags);
+
+            if (!bcc_flag_check_n(temp_item_result_pass_1.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+                return temp_item_result_pass_1;
+            } else {
+                last_item_result = temp_item_result_pass_1;
+                bcc_update_curr_rc(bcc, bcc->top_reg);
+            }
+        }
+    }
+
+    const auto emit_remainder_flags = bcc_flag_unset_n(baseline_flags, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1);
+
+    for (uint16_t item_pos = 0; item_pos < block_item_count; item_pos++) {
+        const auto item_tag = (block_items + item_pos)->tag;
+        const auto temp_item_result_pass_2 = bcc_emit_next(bcc, block_items + item_pos, emit_remainder_flags);
+
+        if (!bcc_flag_check_n(temp_item_result_pass_2.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+            return temp_item_result_pass_2;
+        } else {
+            last_item_result = temp_item_result_pass_2;
+            bcc_update_curr_rc(bcc, bcc->top_reg);
+        }
+    }
+
+    const auto last_value_reg = bcc_normalize_to_local_reg(bcc, last_item_result);
+
+    if (bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_started_fun_body }, 1)) {
+        if (last_value_reg > 0) {
+            bcc_emit_inst_unary(bcc, nl_op_ret, last_value_reg);
+
+            return (bcc_result) {
+                .n = last_value_reg,
+                .cid = bcc->curr_cid,
+                .flags = flags,
+                .domain = nl_bcc_sym_local_r
+            };
+        } else {
+            bcc_emit_inst_unary(bcc, nl_op_store_nil, block_baseline_reg);
+            bcc_emit_inst_unary(bcc, nl_op_ret, block_baseline_reg);
+
+            return (bcc_result) {
+                .n = block_baseline_reg,
+                .cid = bcc->curr_cid,
+                .flags = flags,
+                .domain = nl_bcc_sym_local_r
+            };
+        }
+    } else {
+        if (last_value_reg > 0) {
+            bcc_emit_inst_binary(bcc, nl_op_mov_rr, block_baseline_reg, last_value_reg);
+            bcc->top_reg = block_baseline_reg + 1;
+
+            return (bcc_result) {
+                .n = last_value_reg,
+                .cid = bcc->curr_cid,
+                .flags = flags,
+                .domain = nl_bcc_sym_local_r
+            };
+        } else {
+            bcc_emit_inst_unary(bcc, nl_op_store_nil, block_baseline_reg);
+            bcc->top_reg = block_baseline_reg + 1;
+
+            return (bcc_result) {
+                .n = block_baseline_reg,
+                .cid = bcc->curr_cid,
+                .flags = flags,
+                .domain = nl_bcc_sym_local_r
+            };
+        }
+    }
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_stmt_def(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_stmt_ret(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto ret_node = &node->data.sr;
+    const ast_node* ret_expr = ret_node->result;
+
+    const auto ret_expr_result = bcc_emit_next(bcc, ret_expr, bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1));
+
+    const auto pre_ret_top_reg = bcc->top_reg;
+    const auto reserved_ret_reg = bcc_normalize_to_local_reg(bcc, ret_expr_result);
+
+    if (reserved_ret_reg == -1) {
+        return bcc_dud_result_v;
+    }
+
+    bcc_emit_inst_unary(bcc, nl_op_ret, reserved_ret_reg);
+    bcc_update_curr_rc(bcc, pre_ret_top_reg); // ! save register window space despite the stack-reg-alloc per result if duped returns are written by the user!
+
+    return (bcc_result) {
+        .n = 0,
+        .cid = bcc->curr_cid,
+        .flags = flags,
+        .domain = nl_bcc_sym_invalid
+    };
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_expr_stmt(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto expr_stmt_node = &node->data.es;
+    const ast_node* expr_stmt_inner_expr = expr_stmt_node->expr;
+    const auto pre_inner_expr_top_reg = bcc->top_reg;
+
+    const auto inner_expr_result = bcc_emit_next(bcc, expr_stmt_inner_expr, bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1));
+
+    // ! Discard registers in naked expression of expr-stmt to save register window space in the VM.
+    bcc_update_curr_rc(bcc, pre_inner_expr_top_reg);
+
+    return inner_expr_result;
+}
+
+
 
 [[nodiscard]]
-bcc_result bcc_emit_stmt_ret(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_state nl_bcc_state_new(int32_t max_strings, int32_t max_objects, int32_t max_closures) {
+    auto scope_buf = dynbuf_new(sizeof(symscope), 4, scope_del);
+
+    auto loop_buf = dynbuf_new(sizeof(bcc_loopinfo), 4, bcc_loopinfo_del);
+
+    ent_pool temp_pool_s = ent_pool_new(sizeof(string), max_strings, string_del), temp_pool_o = ent_pool_new(sizeof(table), max_objects, nullptr), temp_pool_c = ent_pool_new(sizeof(closure), max_closures, nullptr);
+
+    bcc_state temp_bccs = {
+        .scopes = scope_buf,
+        .loops = loop_buf,
+        .pool_s = temp_pool_s,
+        .pool_o = temp_pool_o,
+        .pool_c = temp_pool_c,
+        .chunks = dynbuf_new(sizeof(chunk), 4, chunk_del),
+        .gvals = calloc(bcc_initial_global_cap_v, sizeof(value)),
+        .gvals_cap = bcc_initial_global_cap_v,
+        .gvals_n = 0,
+        .top_reg = 0,
+        .curr_cid = 0,
+        .entry_cid = 0,
+        .errors = 0,
+        .line = 1,
+        .col = 1
+    };
+
+    bcc_start_scope(&temp_bccs, str_from_cstr("<global>"));
+    temp_bccs.curr_cid = bcc_start_chunk(&temp_bccs);
+
+    return temp_bccs;
+}
+
+void nl_bcc_state_del(bcc_state* bcc) {
+    dynbuf_del(&bcc->loops);
+    dynbuf_del(&bcc->scopes);
+}
 
 [[nodiscard]]
-bcc_result bcc_emit_expr_stmt(bcc_state* bcc, const ast_node* node, uint16_t flags);
+program nl_bcc_compile_tu(bcc_state* bcc, const ast_unit* tu) {
+    const auto ast_roots = (const ast_node*) tu->roots.data;
+    const auto ast_roots_n = tu->roots.n;
 
-[[nodiscard]]
-bcc_result bcc_emit_next(bcc_state* bcc, const ast_node* node, uint16_t flags);
+    bcc->source = &tu->source;
 
+    bcc_result last_item_result = bcc_dud_result_v;
+    const auto baseline_flags = bcc_flag_set_n(nl_bcc_cf_ok, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1);
+    const auto block_baseline_reg = bcc->top_reg;
 
+    for (uint16_t defs_item_pos = 0; defs_item_pos < ast_roots_n && bcc->errors < bcc_max_errors; defs_item_pos++) {
+        const auto item_tag = (ast_roots + defs_item_pos)->tag;
 
-[[nodiscard]]
-bcc_state nl_bcc_state_new(int32_t max_strings, int32_t max_objects, int32_t max_closures);
+        if (item_tag == nl_ast_stmt_def || item_tag == nl_ast_block) {
+            const auto temp_item_result_pass_1 = bcc_emit_next(bcc, ast_roots + defs_item_pos, baseline_flags);
 
-void nl_bcc_state_del(bcc_state* bcc);
+            if (!bcc_flag_check_n(temp_item_result_pass_1.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+                continue;
+            } else {
+                last_item_result = temp_item_result_pass_1;
+                bcc_update_curr_rc(bcc, bcc->top_reg);
+            }
+        }
+    }
 
-[[nodiscard]]
-program nl_bcc_compile_tu(const ast_unit* tu);
+    for (uint16_t defs_item_pos = 0; defs_item_pos < ast_roots_n && bcc->errors < bcc_max_errors; defs_item_pos++) {
+        const auto temp_item_result_pass_1 = bcc_emit_next(bcc, ast_roots + defs_item_pos, baseline_flags);
+
+        if (!bcc_flag_check_n(temp_item_result_pass_1.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+            continue;
+        } else {
+            last_item_result = temp_item_result_pass_1;
+            bcc_update_curr_rc(bcc, bcc->top_reg);
+        }
+    }
+
+    const auto top_level_result_reg = bcc_normalize_to_local_reg(bcc, last_item_result);
+
+    if (bcc->errors > 0) {
+        dynbuf_del(&bcc->chunks);
+        free(bcc->gvals);
+        ent_pool_del(&bcc->pool_c);
+        ent_pool_del(&bcc->pool_o);
+        ent_pool_del(&bcc->pool_s);
+
+        return program_dud();
+    }
+
+    if (top_level_result_reg >= 0) {
+        bcc_emit_inst_unary(bcc, nl_op_ret, top_level_result_reg);
+    } else {
+        bcc_emit_inst_unary(bcc, nl_op_store_nil, bcc->top_reg);
+        bcc_emit_inst_unary(bcc, nl_op_ret, bcc->top_reg++);
+    }
+
+    return (program) {
+        .pool_s = bcc->pool_s,
+        .pool_o = bcc->pool_o,
+        .pool_c = bcc->pool_c,
+        .chunks = bcc->chunks,
+        .gv = bcc->gvals,
+        .gv_len = bcc->gvals_n,
+        .gv_cap = bcc->gvals_cap,
+        .entry_cid = bcc->entry_cid
+    };
+}
