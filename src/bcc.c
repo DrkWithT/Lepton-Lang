@@ -990,7 +990,6 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
     const auto cond_is_expr = cond_node->is_expr;
 
     auto cond_ending_ips = dynbuf_new(sizeof(uint16_t), 4, nullptr);
-    int32_t reserved_cond_result_reg = -1;
     const auto cond_result_value_reg = bcc->top_reg;
 
     for (uint16_t cond_entry_i = 0; cond_entry_i < cond_entries_n; cond_entry_i++) {
