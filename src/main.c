@@ -116,18 +116,31 @@ int main(int argc, const char* argv[]) {
 
     const bool ast_ok = !str_empty(&ast.source);
 
+    if (!ast_ok) {
+        ast_unit_del(&ast);
+        string_del(&loaded_src);
+
+        return 1;
+    }
+
     auto compiler = nl_bcc_state_new(1024, 2048, 2048);
     auto compiled_bc = nl_bcc_compile_tu(&compiler, &ast);
-    const bool bc_ok = compiled_bc.gv != nullptr;
 
-    if (compiled_bc.gv != nullptr) {
-        program_output(stdout, &compiled_bc);
+    if (!compiled_bc.gv) {
+        program_del(&compiled_bc);
+        nl_bcc_state_del(&compiler);
+        ast_unit_del(&ast);
+        string_del(&loaded_src);
+
+        return 1;
     }
+
+    program_output(stdout, &compiled_bc);
 
     program_del(&compiled_bc);
     nl_bcc_state_del(&compiler);
     ast_unit_del(&ast);
     string_del(&loaded_src);
 
-    return (ast_ok && bc_ok) ? 0 : 1;
+    return 0;
 }

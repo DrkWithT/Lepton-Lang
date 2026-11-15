@@ -88,16 +88,21 @@ void str_output(FILE* fs, const str* s) {
 
 [[nodiscard]]
 int32_t str_to_i32(const str* s) {
-    if (str_size(s) > max_str_to_i_scan) {
+    const auto s_length = str_size(s);
+
+    if (s_length == 0 || s_length > max_str_to_i_scan) {
         return 0;
     }
 
     int32_t base = 1;
     int32_t n = 0;
+    int16_t digit_pos = s_length - 1;
 
-    for (int16_t digit_pos = 0; digit_pos < s->n; digit_pos++, base *= str_to_i32_base) {
-        n += (int32_t) s->s[digit_pos] * base;
-    }
+    do {
+        n += (int32_t) (s->s[digit_pos] - '0') * base;
+        digit_pos--;
+        base *= str_to_i32_base;
+    } while (digit_pos >= 0);
 
     return n;
 }
@@ -108,27 +113,27 @@ int32_t str_to_i32(const str* s) {
 float str_to_f32(const str* s) {
     auto dot_it = strnstr(s->s, (const char[]) { '.', '\0' }, s->n);
     // ! This calculation assumes strs for lexemes have grammar `DIGIT+ '.' DIGIT*`. Since the 1st whole digit is not a multiple of 10, subtract 1 extra power level from the digit count between the dot and the highest digit.
-    int32_t max_pow10 = (s->s + s->n - 2) - dot_it;
+    int32_t max_pow10 = dot_it - (s->s + 1);
 
     float n = 0.0f;
     float base = powf(10.0f, (float) max_pow10);
 
-    auto s_rev_it = s->s + s->n - 1;
-    const auto s_rev_it_end = s->s;
+    auto s_it = s->s;
+    const auto s_it_end = s->s;
 
-    for (; s_rev_it >= s_rev_it_end && s_rev_it != dot_it; s_rev_it--, base /= str_to_f32_base) {
-        n += ((float) *s_rev_it) * base;
+    for (; s_it < s_it_end && s_it != dot_it; s_it++, base /= str_to_f32_base) {
+        n += ((float) (*s_it - '0')) * base;
     }
 
-    if (s_rev_it == s_rev_it_end) {
+    if (s_it == s_it_end) {
         return n;
     } else {
         // ! Skip '.' if it exists.
-        s_rev_it--;
+        s_it++;
     }
 
-    for (; s_rev_it >= s_rev_it_end; s_rev_it--, base /= str_to_f32_base) {
-        n += ((float) *s_rev_it) * base;
+    for (; s_it < s_it_end; s_it++, base /= str_to_f32_base) {
+        n += ((float) *s_it) * base;
     }
 
     return n;

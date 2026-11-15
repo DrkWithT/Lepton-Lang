@@ -1268,11 +1268,11 @@ bcc_result bcc_emit_expr_stmt(bcc_state* bcc, const ast_node* node, uint16_t fla
 
 [[nodiscard]]
 bcc_state nl_bcc_state_new(int32_t max_strings, int32_t max_objects, int32_t max_closures) {
-    auto scope_buf = dynbuf_new(sizeof(symscope), 4, scope_del);
+    auto scope_buf = dynbuf_new(sizeof(symscope), 4, symscope_del);
 
     auto loop_buf = dynbuf_new(sizeof(bcc_loopinfo), 4, bcc_loopinfo_del);
 
-    ent_pool temp_pool_s = ent_pool_new(sizeof(string), max_strings, string_del), temp_pool_o = ent_pool_new(sizeof(metatable), max_objects, metatable_del), temp_pool_c = ent_pool_new(sizeof(closure), max_closures, nullptr);
+    ent_pool temp_pool_s = ent_pool_new(sizeof(string), max_strings, string_del), temp_pool_o = ent_pool_new(sizeof(metatable), max_objects, metatable_del), temp_pool_c = ent_pool_new(sizeof(closure), max_closures, dud_deleter);
 
     bcc_state temp_bccs = {
         .scopes = scope_buf,
@@ -1329,8 +1329,10 @@ program nl_bcc_compile_tu(bcc_state* bcc, const ast_unit* tu) {
         }
     }
 
+    const auto remainder_pass_flags = bcc_flag_unset_n(baseline_flags, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1);
+
     for (uint16_t defs_item_pos = 0; defs_item_pos < ast_roots_n && bcc->errors < bcc_max_errors; defs_item_pos++) {
-        const auto temp_item_result_pass_1 = bcc_emit_next(bcc, ast_roots + defs_item_pos, baseline_flags);
+        const auto temp_item_result_pass_1 = bcc_emit_next(bcc, ast_roots + defs_item_pos, remainder_pass_flags);
 
         if (!bcc_flag_check_n(temp_item_result_pass_1.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
             continue;

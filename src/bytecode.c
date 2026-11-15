@@ -117,13 +117,13 @@ void program_del(void* pg) {
 
 void value_output(FILE* os, value v) {
     switch (v.tag) {
-        case nl_vtag_nil: fprintf(os, "nil");
-        case nl_vtag_bool: fprintf(os, "bool(%c)", v.b ? 'T' : 'F');
-        case nl_vtag_int: fprintf(os, "i32(%d)", v.n);
-        case nl_vtag_num: fprintf(os, "f32(%f)", v.f);
-        case nl_vtag_str: fprintf(os, "str(id %d)", v.n);
-        case nl_vtag_obj: fprintf(os, "obj(id %d)", v.n);
-        default: fprintf(os, "unknown(...)");
+        case nl_vtag_nil: fprintf(os, "nil"); break;
+        case nl_vtag_bool: fprintf(os, "bool(%c)", v.b ? 'T' : 'F'); break;
+        case nl_vtag_int: fprintf(os, "i32(%d)", v.n); break;
+        case nl_vtag_num: fprintf(os, "f32(%f)", v.f); break;
+        case nl_vtag_str: fprintf(os, "str(id %d)", v.n); break;
+        case nl_vtag_obj: fprintf(os, "obj(id %d)", v.n); break;
+        default: fprintf(os, "unknown(...)"); break;
     }
 }
 
@@ -135,11 +135,11 @@ void inst_output(FILE* os, const uint8_t* ip, uint8_t arity) {
             fprintf(os, "%u", ip[1] + (ip[2] << 8));
             break;
         case 2:
-            fprintf(os, "%u", ip[1] + (ip[2] << 8));
+            fprintf(os, "%u, ", ip[1] + (ip[2] << 8));
             fprintf(os, "%u", ip[3] + (ip[4] << 8));
             break;
         case 3:
-            fprintf(os, "%u", ip[1] + (ip[2] << 8));
+            fprintf(os, "%u, ", ip[1] + (ip[2] << 8));
             fprintf(os, "%u, ", ip[3] + (ip[4] << 8));
             fprintf(os, "%u", ip[5] + (ip[6] << 8));
             break;
@@ -167,7 +167,7 @@ void chunk_output(FILE* os, const chunk* c) {
     for (uint16_t bc_byte_pos = 0; bc_byte_pos < chunk_bc_len; ) {
         fprintf(os, "%u: ", bc_byte_pos);
 
-        switch ((op) chunk_bc[0]) {
+        switch ((op) chunk_bc[bc_byte_pos]) {
             case nl_op_nop: inst_output(os, chunk_bc + bc_byte_pos, 0); bc_byte_pos++; break;
             case nl_op_store_nil: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
             case nl_op_store_bool: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
@@ -205,6 +205,8 @@ void chunk_output(FILE* os, const chunk* c) {
             case nl_op_ret: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
             default: fprintf(os, "(unknown op)"); return;
         }
+
+        fprintf(os, "\n");
     }
 }
 

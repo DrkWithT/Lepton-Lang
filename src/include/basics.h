@@ -27,3 +27,5 @@ if (!PTR_NAME) {\
     NL_PANIC("Could not allocate multiple object buffer here.", FILE_NAME, LINE_NO)\
 }\
 \
+
+static inline void dud_deleter([[maybe_unused]] void* obj) {}
