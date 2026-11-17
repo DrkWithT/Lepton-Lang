@@ -11,11 +11,10 @@ My experiment of a more expression-oriented, terse, and dynamic scripting langua
 #### To Do's
  1. Test parser. **WIP**
  2. Add bytecode types.
-    - Register-based opcodes
-    - NaN boxed value??
-    - Create Shapes and ICs.
- 3. Add generic "pools" for objects.
- 4. Make bytecode compiler & test it.
+    - Register-based opcodes. **OK**
+    - Create Shapes and ICs. **OK**
+ 3. Add generic "pools" for objects. **OK**
+ 4. Make bytecode compiler & test it. **WIP**
  5. Make VM using Shapes and ICs.
  6. Refactor things to use a unified "driver" interface.
  7. Add GC.
