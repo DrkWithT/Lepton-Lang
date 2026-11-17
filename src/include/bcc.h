@@ -9,6 +9,7 @@
 
 typedef enum nl_bcc_symtag_t : uint8_t {
     nl_bcc_sym_invalid,
+    nl_bcc_sym_non_locator, // for statements which do something vs. return a value necessarily / skipped AST nodes
     nl_bcc_sym_acc_r,       // call result
     nl_bcc_sym_k,           // constant `value`
     nl_bcc_sym_global_k,

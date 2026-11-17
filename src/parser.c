@@ -743,12 +743,13 @@ ast_node* nl_parse_cond(parser* p, const str* source, bool is_expr) {
         }
 
         auto next_entry = nl_parse_cond_entry(p, source, is_expr);
+        dynbuf_push(&cond_entries, &next_entry);
+
         if (!next_entry.body) {
             dynbuf_del(&cond_entries);
             return nullptr;
         } else if (!next_entry.check) {
-            dynbuf_push(&cond_entries, &next_entry);
-            break;
+            continue;
         }
     }
 
@@ -990,7 +991,11 @@ ast_node* nl_parse_block(parser* p, const str* source, bool is_expr) {
         }
 
         auto next_item_ptr = nl_parse_next(p, source, false);
-        dynbuf_push(&block_items, &next_item_ptr);
+        if (!next_item_ptr) {
+            return next_item_ptr;
+        }
+
+        dynbuf_push(&block_items, next_item_ptr);
     }
 
     return nl_make_ast_ptr((ast_node) {
@@ -1033,6 +1038,7 @@ ast_node* nl_parse_next(parser* p, const str* source, bool is_expr) {
             case nl_tk_kw_cond: return nl_parse_cond(p, source, is_expr);
             case nl_tk_kw_loop: return nl_parse_loop(p, source, is_expr);
             case nl_tk_kw_fun: return nl_parse_expr_func(p, source);
+            case nl_tk_lbrace: return nl_parse_block(p, source, true);
             default: return nl_parse_assignment(p, source);
         }
     } else {

@@ -187,12 +187,20 @@ void bcc_emit_byte(bcc_state* bcc, uint8_t b) {
     curr_chunk->code_len++;
 }
 
-uint16_t bcc_emit_inst_unary(bcc_state* bcc, op o, uint16_t a0) {
+uint16_t bcc_emit_inst_nonary(bcc_state* bcc, op o) {
     const uint16_t bc_ipos = ((const chunk*)dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
 
-    bcc_emit_byte(bcc, (uint8_t)o);
-    bcc_emit_byte(bcc, (uint8_t)(a0 & 0xff));
-    bcc_emit_byte(bcc, (uint8_t)((a0 & 0xff00) >> 8));
+    bcc_emit_byte(bcc, (uint8_t) o);
+
+    return bc_ipos;
+}
+
+uint16_t bcc_emit_inst_unary(bcc_state* bcc, op o, uint16_t a0) {
+    const uint16_t bc_ipos = ((const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
+
+    bcc_emit_byte(bcc, (uint8_t) o);
+    bcc_emit_byte(bcc, (uint8_t) (a0 & 0xff));
+    bcc_emit_byte(bcc, (uint8_t) ((a0 & 0xff00) >> 8));
 
     return bc_ipos;
 }
@@ -200,11 +208,11 @@ uint16_t bcc_emit_inst_unary(bcc_state* bcc, op o, uint16_t a0) {
 uint16_t bcc_emit_inst_binary(bcc_state* bcc, op o, uint16_t a0, uint16_t a1) {
     const uint16_t bc_ipos = ((const chunk*)dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
 
-    bcc_emit_byte(bcc, (uint8_t)o);
-    bcc_emit_byte(bcc, (uint8_t)(a0 & 0xff));
-    bcc_emit_byte(bcc, (uint8_t)((a0 & 0xff00) >> 8));
-    bcc_emit_byte(bcc, (uint8_t)(a1 & 0xff));
-    bcc_emit_byte(bcc, (uint8_t)((a1 & 0xff00) >> 8));
+    bcc_emit_byte(bcc, (uint8_t) o);
+    bcc_emit_byte(bcc, (uint8_t) (a0 & 0xff));
+    bcc_emit_byte(bcc, (uint8_t) ((a0 & 0xff00) >> 8));
+    bcc_emit_byte(bcc, (uint8_t) (a1 & 0xff));
+    bcc_emit_byte(bcc, (uint8_t) ((a1 & 0xff00) >> 8));
 
     return bc_ipos;
 }
@@ -212,13 +220,13 @@ uint16_t bcc_emit_inst_binary(bcc_state* bcc, op o, uint16_t a0, uint16_t a1) {
 uint16_t bcc_emit_inst_ternary(bcc_state* bcc, op o, uint16_t a0, uint16_t a1, uint16_t a2) {
     const uint16_t bc_ipos = ((const chunk*)dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
 
-    bcc_emit_byte(bcc, (uint8_t)o);
-    bcc_emit_byte(bcc, (uint8_t)(a0 & 0xff));
-    bcc_emit_byte(bcc, (uint8_t)((a0 & 0xff00) >> 8));
-    bcc_emit_byte(bcc, (uint8_t)(a1 & 0xff));
-    bcc_emit_byte(bcc, (uint8_t)((a1 & 0xff00) >> 8));
-    bcc_emit_byte(bcc, (uint8_t)(a2 & 0xff));
-    bcc_emit_byte(bcc, (uint8_t)((a2 & 0xff00) >> 8));
+    bcc_emit_byte(bcc, (uint8_t) o);
+    bcc_emit_byte(bcc, (uint8_t) (a0 & 0xff));
+    bcc_emit_byte(bcc, (uint8_t) ((a0 & 0xff00) >> 8));
+    bcc_emit_byte(bcc, (uint8_t) (a1 & 0xff));
+    bcc_emit_byte(bcc, (uint8_t) ((a1 & 0xff00) >> 8));
+    bcc_emit_byte(bcc, (uint8_t) (a2 & 0xff));
+    bcc_emit_byte(bcc, (uint8_t) ((a2 & 0xff00) >> 8));
 
     return bc_ipos;
 }
@@ -1018,6 +1026,8 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
             const auto entry_resultant_result = bcc_emit_next(bcc, cond_case_resultant, cond_item_flags);
 
             if (!bcc_flag_check_n(entry_resultant_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+                dynbuf_del(&cond_ending_ips);
+
                 return entry_resultant_result;
             }
 
@@ -1026,6 +1036,7 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
             const auto next_entry_ip = bcc_next_ip(bcc);
 
             bcc_patch_cond_jump(bcc, entry_checked_jump_ip, next_entry_ip);
+            dynbuf_push(&cond_ending_ips, &next_exit_jump_ip);
 
             if (cond_is_expr) {
                 bcc_emit_inst_binary(bcc, nl_op_mov_rr, cond_result_value_reg, entry_resultant_value_reg);
@@ -1035,6 +1046,8 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
             const auto last_entry_resultant_result = bcc_emit_next(bcc, cond_case_resultant, cond_item_flags);
 
             if (!bcc_flag_check_n(last_entry_resultant_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+                dynbuf_del(&cond_ending_ips);
+
                 return last_entry_resultant_result;
             }
 
@@ -1046,6 +1059,14 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
             }
         }
     }
+
+    const auto end_cond_ip = bcc_emit_inst_nonary(bcc, nl_op_nop);
+
+    for (uint16_t jump_ipos_index = 0; jump_ipos_index < cond_ending_ips.n; jump_ipos_index++) {
+        bcc_patch_jump(bcc, *((const uint16_t*) dynbuf_get(&cond_ending_ips, jump_ipos_index)), end_cond_ip);
+    }
+
+    dynbuf_del(&cond_ending_ips);
 
     if (cond_is_expr) {
         return (bcc_result) {
@@ -1126,7 +1147,7 @@ bcc_result bcc_emit_stmt_def(bcc_state* bcc, const ast_node* node, uint16_t flag
         .n = 0,
         .cid = 0,
         .flags = flags,
-        .domain = nl_bcc_sym_invalid
+        .domain = nl_bcc_sym_non_locator
     };
 }
 
@@ -1163,7 +1184,7 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
         }
     }
 
-    const auto emit_remainder_flags = bcc_flag_unset_n(baseline_flags, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1);
+    const auto emit_remainder_flags = bcc_flag_unset_n(prepass_defs_flags, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1);
 
     for (uint16_t item_pos = 0; item_pos < block_item_count; item_pos++) {
         const auto item_tag = (block_items + item_pos)->tag;
@@ -1332,6 +1353,7 @@ program nl_bcc_compile_tu(bcc_state* bcc, const ast_unit* tu) {
     const auto remainder_pass_flags = bcc_flag_unset_n(baseline_flags, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1);
 
     for (uint16_t defs_item_pos = 0; defs_item_pos < ast_roots_n && bcc->errors < bcc_max_errors; defs_item_pos++) {
+        const auto non_def_tag = (ast_roots + defs_item_pos)->tag;
         const auto temp_item_result_pass_1 = bcc_emit_next(bcc, ast_roots + defs_item_pos, remainder_pass_flags);
 
         if (!bcc_flag_check_n(temp_item_result_pass_1.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
