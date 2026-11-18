@@ -19,17 +19,17 @@ dynbuf dynbuf_new(size_t item_size, uint32_t init_cap, nl_deleter_t deleter);
 void dynbuf_del(dynbuf* self);
 
 [[nodiscard]]
-static inline const void* dynbuf_data(const dynbuf* self) {
+NL_CXX_INLINE const void* dynbuf_data(const dynbuf* self) {
     return self->data;
 }
 
 [[nodiscard]]
-static inline bool dynbuf_empty(const dynbuf* self) {
+NL_CXX_INLINE bool dynbuf_empty(const dynbuf* self) {
     return !self->data || self->n == 0;
 }
 
 [[nodiscard]]
-static inline size_t dynbuf_size(const dynbuf* self) {
+NL_CXX_INLINE size_t dynbuf_size(const dynbuf* self) {
     return self->n;
 }
 
@@ -39,7 +39,7 @@ void* dynbuf_push(dynbuf* self, const void* src);
 size_t dynbuf_pop(dynbuf* self);
 
 [[nodiscard]]
-static inline const void* dynbuf_last(const dynbuf* self) {
+NL_CXX_INLINE const void* dynbuf_last(const dynbuf* self) {
     if (dynbuf_empty(self)) {
         return nullptr;
     }
@@ -48,7 +48,7 @@ static inline const void* dynbuf_last(const dynbuf* self) {
 }
 
 [[nodiscard]]
-static inline void* dynbuf_last_mut(dynbuf* self) {
+NL_CXX_INLINE void* dynbuf_last_mut(dynbuf* self) {
     if (dynbuf_empty(self)) {
         return nullptr;
     }
@@ -57,7 +57,7 @@ static inline void* dynbuf_last_mut(dynbuf* self) {
 }
 
 [[nodiscard]]
-static inline const void* dynbuf_get(const dynbuf* self, uint32_t pos) {
+NL_CXX_INLINE const void* dynbuf_get(const dynbuf* self, uint32_t pos) {
     if (pos >= self->n) {
         return nullptr;
     }
@@ -66,7 +66,7 @@ static inline const void* dynbuf_get(const dynbuf* self, uint32_t pos) {
 }
 
 [[nodiscard]]
-static inline void* dynbuf_get_mut(dynbuf* self, uint32_t pos) {
+NL_CXX_INLINE void* dynbuf_get_mut(dynbuf* self, uint32_t pos) {
     if (pos >= self->n) {
         return nullptr;
     }

@@ -45,32 +45,32 @@ typedef struct nl_entity_pool_t {
 ent_pool ent_pool_new(size_t object_size, int32_t capacity, nl_deleter_t df);
 void ent_pool_del(ent_pool* self);
 
-static inline void ent_pool_tenure(ent_pool* p) {
+NL_CXX_INLINE void ent_pool_tenure(ent_pool* p) {
     p->tenure_id = p->next_id - 1;
 }
 
 [[nodiscard]]
-static inline bool ent_pool_gc_ripe(const ent_pool* p) {
+NL_CXX_INLINE bool ent_pool_gc_ripe(const ent_pool* p) {
     return p->cost >= p->gc_cost;
 }
 
 [[nodiscard]]
-static inline void* ent_pool_data_mut(ent_pool* self) {
+NL_CXX_INLINE void* ent_pool_data_mut(ent_pool* self) {
     return self->mem.data;
 }
 
 [[nodiscard]]
-static inline const void* ent_pool_data(ent_pool* self) {
+NL_CXX_INLINE const void* ent_pool_data(ent_pool* self) {
     return self->mem.data;
 }
 
 [[nodiscard]]
-static inline int32_t ent_pool_max_id(const ent_pool* self) {
+NL_CXX_INLINE int32_t ent_pool_max_id(const ent_pool* self) {
     return self->max_id;
 }
 
 [[nodiscard]]
-static inline entity_handle ent_pool_get(const ent_pool* self, int32_t id) {
+NL_CXX_INLINE entity_handle ent_pool_get(const ent_pool* self, int32_t id) {
     if (id < 0 || id >= self->max_id) {
         NL_PANIC("Invalid ID passed to immutable ent_pool_get(): expected id in [0; max_id)", __FILE__, __LINE__)
     }
@@ -82,7 +82,7 @@ static inline entity_handle ent_pool_get(const ent_pool* self, int32_t id) {
 }
 
 [[nodiscard]]
-static inline entity_handle_mut ent_pool_get_mut(ent_pool* self, int32_t id) {
+NL_CXX_INLINE entity_handle_mut ent_pool_get_mut(ent_pool* self, int32_t id) {
     if (id < 0 || id >= self->max_id) {
         NL_PANIC("Invalid ID passed to mutating ent_pool_get_mut(): expected id in [0; max_id)", __FILE__, __LINE__)
     }
@@ -94,7 +94,7 @@ static inline entity_handle_mut ent_pool_get_mut(ent_pool* self, int32_t id) {
 }
 
 [[nodiscard]]
-static inline entity_handle ent_pool_get_unchecked(const ent_pool* self, int32_t id) {
+NL_CXX_INLINE entity_handle ent_pool_get_unchecked(const ent_pool* self, int32_t id) {
     return (entity_handle) {
         .p = dynbuf_get(&self->mem, id),
         .id = id
@@ -102,7 +102,7 @@ static inline entity_handle ent_pool_get_unchecked(const ent_pool* self, int32_t
 }
 
 [[nodiscard]]
-static inline entity_handle_mut ent_pool_get_mut_unchecked(ent_pool* self, int32_t id) {
+NL_CXX_INLINE entity_handle_mut ent_pool_get_mut_unchecked(ent_pool* self, int32_t id) {
     return (entity_handle_mut) {
         .p = dynbuf_get_mut(&self->mem, id),
         .id = id

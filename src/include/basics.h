@@ -8,6 +8,8 @@
 
 typedef void(*nl_deleter_t)(void* object);
 
+#define NL_CXX_INLINE static inline
+
 #define NL_PANIC(MSG, FILE_NAME, LINE_NO)\
 do {\
     fprintf(stderr, "Panic ~ %s, %d: %s\n", FILE_NAME, LINE_NO, MSG);\
@@ -28,4 +30,4 @@ if (!PTR_NAME) {\
 }\
 \
 
-static inline void dud_deleter([[maybe_unused]] void* obj) {}
+NL_CXX_INLINE void dud_deleter([[maybe_unused]] void* obj) {}

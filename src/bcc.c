@@ -108,7 +108,7 @@ const bcc_emitter_t bcc_emitters[] = {
     bcc_emit_expr_stmt,
 };
 
-static inline bcc_result bcc_emit_next(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+NL_CXX_INLINE bcc_result bcc_emit_next(bcc_state* bcc, const ast_node* node, uint16_t flags) {
     return bcc_emitters[node->tag](bcc, node, flags);
 }
 
@@ -151,12 +151,12 @@ uint16_t bcc_start_chunk(bcc_state* bcc) {
     return next_cid;
 }
 
-static inline void bcc_resume_chunk(bcc_state* bcc, uint16_t cid) {
+NL_CXX_INLINE void bcc_resume_chunk(bcc_state* bcc, uint16_t cid) {
     bcc->curr_cid = cid;
 }
 
 [[nodiscard]]
-static inline uint16_t bcc_next_ip(const bcc_state* bcc) {
+NL_CXX_INLINE uint16_t bcc_next_ip(const bcc_state* bcc) {
     const auto curr_chunk = (const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid);
 
     return curr_chunk->code_len;
@@ -294,7 +294,7 @@ void bcc_end_scope(bcc_state* bcc) {
     dynbuf_pop(&bcc->scopes);
 }
 
-static inline void bcc_update_curr_rc(bcc_state* bcc, uint16_t next_rc) {
+NL_CXX_INLINE void bcc_update_curr_rc(bcc_state* bcc, uint16_t next_rc) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
 
     if (next_rc > curr_chunk->regs_n) {
@@ -327,7 +327,7 @@ int32_t bcc_normalize_to_local_reg(bcc_state* bcc, bcc_result r) {
     return -1;
 }
 
-static inline void nl_bcc_report_err(bcc_state* bcc, const char* msg, uint16_t line, uint16_t col) {
+NL_CXX_INLINE void bcc_report_err(bcc_state* bcc, const char* msg, uint16_t line, uint16_t col) {
     bcc->errors++;
 
     fprintf(
@@ -342,7 +342,7 @@ static inline void nl_bcc_report_err(bcc_state* bcc, const char* msg, uint16_t l
 
 // ! For symbol scope lookup mode: `G` is global-only, `L` is local-only, and `B` is bubbling.
 [[nodiscard]]
-const syminfo* nl_bcc_lookup_symbol(bcc_state* bcc, str s, symtag domain, char mode) {
+const syminfo* bcc_lookup_symbol(bcc_state* bcc, str s, symtag domain, char mode) {
     int32_t scope_depth = (mode == 'G') ? 0 : bcc->scopes.n - 1;
     const auto should_bubble_lookup = mode == 'B';
 
@@ -368,7 +368,7 @@ const syminfo* nl_bcc_lookup_symbol(bcc_state* bcc, str s, symtag domain, char m
 }
 
 [[nodiscard]]
-const syminfo* nl_bcc_push_symbol_to(bcc_state* bcc, syminfo info, char should_use_global) {
+const syminfo* bcc_push_symbol_to(bcc_state* bcc, syminfo info, char should_use_global) {
     auto target_scope = (symscope*) dynbuf_get_mut(&bcc->scopes, (should_use_global == 'G') ? 0 : bcc->scopes.n - 1 );
 
     return (const syminfo*) dynbuf_push(&target_scope->infos, &info);
@@ -404,8 +404,8 @@ uint16_t bcc_push_konst(bcc_state* bcc, value v) {
 }
 
 [[nodiscard]]
-const syminfo* nl_bcc_record_string_k(bcc_state* bcc, str s) {
-    const auto pre_found_info = nl_bcc_lookup_symbol(bcc, (str) {.s = s.s - 1, .n = s.n + 2}, nl_bcc_sym_k, 'L'); // ! include quotes of string lexeme to distinguish string literals from naked words
+const syminfo* bcc_record_string_k(bcc_state* bcc, str s) {
+    const auto pre_found_info = bcc_lookup_symbol(bcc, (str) {.s = s.s - 1, .n = s.n + 2}, nl_bcc_sym_k, 'L'); // ! include quotes of string lexeme to distinguish string literals from naked words
     if (pre_found_info) {
         return pre_found_info;
     }
@@ -414,7 +414,7 @@ const syminfo* nl_bcc_record_string_k(bcc_state* bcc, str s) {
     auto s_owned = string_from_str(&s);
     auto interned_sd = ent_pool_add(&bcc->pool_s, &s_owned);
 
-    return nl_bcc_push_symbol_to(bcc, (syminfo) {
+    return bcc_push_symbol_to(bcc, (syminfo) {
         .name = (str) {.s = s.s - 1, .n = s.n + 2}, // ! include quotes of string lexeme to distinguish string literals from naked words
         .n = bcc_push_konst(bcc, (value) {
             .n = interned_sd.id,
@@ -426,8 +426,8 @@ const syminfo* nl_bcc_record_string_k(bcc_state* bcc, str s) {
 }
 
 [[nodiscard]]
-const syminfo* nl_bcc_record_global(bcc_state* bcc, str s, value v) {
-    const auto pre_found_info = nl_bcc_lookup_symbol(bcc, s, nl_bcc_sym_global_k, 'G');
+const syminfo* bcc_record_global(bcc_state* bcc, str s, value v) {
+    const auto pre_found_info = bcc_lookup_symbol(bcc, s, nl_bcc_sym_global_k, 'G');
     if (pre_found_info) {
         return pre_found_info;
     }
@@ -450,7 +450,7 @@ const syminfo* nl_bcc_record_global(bcc_state* bcc, str s, value v) {
     bcc->gvals[next_global_v_id] = v;
     bcc->gvals_n++;
 
-    return nl_bcc_push_symbol_to(bcc, (syminfo) {
+    return bcc_push_symbol_to(bcc, (syminfo) {
         .name = s,
         .n = next_global_v_id,
         .cid = 0,
@@ -459,8 +459,8 @@ const syminfo* nl_bcc_record_global(bcc_state* bcc, str s, value v) {
 }
 
 [[nodiscard]]
-const syminfo* nl_bcc_record_local(bcc_state* bcc, str name) {
-    const auto pre_found_info = nl_bcc_lookup_symbol(bcc, name, nl_bcc_sym_local_r, 'L');
+const syminfo* bcc_record_local(bcc_state* bcc, str name) {
+    const auto pre_found_info = bcc_lookup_symbol(bcc, name, nl_bcc_sym_local_r, 'L');
     if (pre_found_info) {
         return pre_found_info;
     }
@@ -470,7 +470,7 @@ const syminfo* nl_bcc_record_local(bcc_state* bcc, str name) {
     const auto top_reg_for_local = bcc->top_reg;
     bcc->top_reg++;
 
-    return nl_bcc_push_symbol_to(bcc, (syminfo) {
+    return bcc_push_symbol_to(bcc, (syminfo) {
         .name = name,
         .n = top_reg_for_local,
         .cid = bcc->curr_cid,
@@ -502,14 +502,14 @@ bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_
     };
     const auto ident_str = *identifier;
 
-    if ((found_named_info = nl_bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_global_k, 'G')) != nullptr) {
+    if ((found_named_info = bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_global_k, 'G')) != nullptr) {
         if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
             bcc_emit_inst_binary(bcc, nl_op_mov_rg, bcc->top_reg, found_named_info->n);
             actual_info.n = bcc->top_reg++;
             actual_info.cid = bcc->curr_cid;
             actual_info.tag = nl_bcc_sym_local_r;
         }
-    } else if ((found_named_info = nl_bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'L')) != nullptr) {
+    } else if ((found_named_info = bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'L')) != nullptr) {
         if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
             bcc_emit_inst_binary(bcc, nl_op_mov_rr, bcc->top_reg, found_named_info->n);
             actual_info.n = bcc->top_reg++;
@@ -518,7 +518,7 @@ bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_
         } else {
             actual_info = *found_named_info;
         }
-    } else if ((found_named_info = nl_bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'B')) != nullptr) {
+    } else if ((found_named_info = bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'B')) != nullptr) {
         if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
             bcc_emit_inst_ternary(bcc, nl_op_ld_upval, bcc->top_reg, found_named_info->n, found_named_info->cid);
 
@@ -537,14 +537,14 @@ bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_
     }
 
     if (!found_named_info) {
-        nl_bcc_report_err(bcc, "Failed to resolve this name...", bcc->line, bcc->col);
+        bcc_report_err(bcc, "Failed to resolve this name...", bcc->line, bcc->col);
         fprintf(stdout, "\tnote: was the name below defined in the function / outer scopes? '\x1b[1;31m");
         str_output(stdout, identifier);
         fprintf(stdout, "\x1b[0m'\n\n");
 
         return bcc_dud_result_v;
     } else if (actual_info.tag == nl_bcc_sym_invalid) {
-        nl_bcc_report_err(bcc, "Found a wrongly-resolved name. Also, globals are non-assignable constants.", bcc->line, bcc->col);
+        bcc_report_err(bcc, "Found a wrongly-resolved name. Also, globals are non-assignable constants.", bcc->line, bcc->col);
         fprintf(stdout, "\tnote: check definition of name '\x1b[1;31m");
         str_output(stdout, identifier);
         fprintf(stdout, "\x1b[0m'\n\n");
@@ -631,7 +631,7 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
             };
         }
         case nl_tk_lt_plain_str: {
-            const auto plain_str_lit_info = nl_bcc_record_string_k(bcc, temp_lexeme);
+            const auto plain_str_lit_info = bcc_record_string_k(bcc, temp_lexeme);
 
             bcc_emit_inst_binary(bcc, nl_op_mov_rk, bcc->top_reg, plain_str_lit_info->n);
             bcc_update_curr_rc(bcc, bcc->top_reg + 1);
@@ -645,7 +645,7 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
         }
         case nl_tk_lt_esc_str:
         default: {
-            nl_bcc_report_err(bcc, "Unsupported literal found here: expected nil, boolean, name, number, or unescaped string.", bcc->line, bcc->col);
+            bcc_report_err(bcc, "Unsupported literal found here: expected nil, boolean, name, number, or unescaped string.", bcc->line, bcc->col);
             return bcc_dud_result_v;
         }
     }
@@ -694,7 +694,7 @@ bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t fla
 
     for (uint16_t param_pos = 0; param_pos < lambda_arity; param_pos++) {
         const auto param_name = tk_get_lexeme(lambda_params + param_pos, bcc->source);
-        const auto param_local_reg = nl_bcc_record_local(bcc, param_name)->n;
+        const auto param_local_reg = bcc_record_local(bcc, param_name)->n;
 
         bcc_emit_inst_binary(bcc, nl_op_ld_arg, param_local_reg, param_pos);
         bcc_save_chunk_var_ent(bcc, (var_ent) {
@@ -749,7 +749,7 @@ bcc_result bcc_emit_expr_call(bcc_state* bcc, const ast_node* node, uint16_t fla
     const uint32_t call_argc = call_node->arg_exprs.n;
 
     if (call_argc > bcc_max_arity) {
-        nl_bcc_report_err(bcc, "The nearby call has more arguments than is supported by the interpreter (255 max).", bcc->line, bcc->col);
+        bcc_report_err(bcc, "The nearby call has more arguments than is supported by the interpreter (255 max).", bcc->line, bcc->col);
         return bcc_dud_result_v;
     }
 
@@ -779,7 +779,7 @@ bcc_result bcc_emit_expr_call(bcc_state* bcc, const ast_node* node, uint16_t fla
     const auto callee_reg = bcc_normalize_to_local_reg(bcc, callee_emit_result);
 
     if (callee_reg == -1) {
-        nl_bcc_report_err(bcc, "Could not resolve callee's location here.", callee_line, callee_col);
+        bcc_report_err(bcc, "Could not resolve callee's location here.", callee_line, callee_col);
 
         return bcc_dud_result_v;
     }
@@ -832,7 +832,7 @@ bcc_result bcc_emit_unary(bcc_state* bcc, const ast_node* node, uint16_t flags) 
     const auto resolved_reg = bcc_normalize_to_local_reg(bcc, inner_expr_result);
 
     if (resolved_reg == -1) {
-        nl_bcc_report_err(bcc, "Failed to resolve inner-expression in the unary-expression around here. Did you define all names within it beforehand?", inner_expr_line, inner_expr_col);
+        bcc_report_err(bcc, "Failed to resolve inner-expression in the unary-expression around here. Did you define all names within it beforehand?", inner_expr_line, inner_expr_col);
 
         return bcc_dud_result_v;
     }
@@ -1087,14 +1087,14 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
 
 [[nodiscard]]
 bcc_result bcc_emit_loop(bcc_state* bcc, const ast_node* node, uint16_t flags) {
-    nl_bcc_report_err(bcc, "Unsupported syntax found in loop around here during bytecode compilation.", bcc->line, bcc->col);
+    bcc_report_err(bcc, "Unsupported syntax found in loop around here during bytecode compilation.", bcc->line, bcc->col);
 
     return bcc_dud_result_v; // todo: implement later
 }
 
 [[nodiscard]]
 bcc_result bcc_emit_loop_abator(bcc_state* bcc, const ast_node* node, uint16_t flags) {
-    nl_bcc_report_err(bcc, "Unsupported syntax found in loop around here during bytecode compilation.", bcc->line, bcc->col);
+    bcc_report_err(bcc, "Unsupported syntax found in loop around here during bytecode compilation.", bcc->line, bcc->col);
 
     return bcc_dud_result_v; // todo: implement later
 }
@@ -1103,7 +1103,7 @@ bcc_result bcc_emit_def_binding(bcc_state* bcc, tk name_tk, const ast_node* init
     const auto var_name = tk_get_lexeme(&name_tk, bcc->source);
 
     if (bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1)) {
-        const auto reserved_local_result = nl_bcc_record_local(bcc, var_name);
+        const auto reserved_local_result = bcc_record_local(bcc, var_name);
 
         bcc_emit_inst_unary(bcc, nl_op_store_nil, reserved_local_result->n);
         bcc_update_curr_rc(bcc, reserved_local_result->n + 1);
@@ -1116,7 +1116,7 @@ bcc_result bcc_emit_def_binding(bcc_state* bcc, tk name_tk, const ast_node* init
         }; 
     } else {
         // ? This info should be already recorded by the previous def visits, so no nullptr checks are needed.
-        const auto found_local_info = nl_bcc_lookup_symbol(bcc, var_name, nl_bcc_sym_local_r, 'L');
+        const auto found_local_info = bcc_lookup_symbol(bcc, var_name, nl_bcc_sym_local_r, 'L');
 
         const auto reserved_init_result = bcc_emit_next(bcc, initializer, bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1));
         const auto reserved_init_reg = bcc_normalize_to_local_reg(bcc, reserved_init_result);
@@ -1201,7 +1201,7 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
     const auto last_value_reg = bcc_normalize_to_local_reg(bcc, last_item_result);
 
     if (bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_started_fun_body }, 1)) {
-        if (last_value_reg > 0) {
+        if (last_value_reg >= 0) {
             bcc_emit_inst_unary(bcc, nl_op_ret, last_value_reg);
 
             return (bcc_result) {
@@ -1222,12 +1222,12 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
             };
         }
     } else {
-        if (last_value_reg > 0) {
+        if (last_value_reg >= 0) {
             bcc_emit_inst_binary(bcc, nl_op_mov_rr, block_baseline_reg, last_value_reg);
             bcc->top_reg = block_baseline_reg + 1;
 
             return (bcc_result) {
-                .n = last_value_reg,
+                .n = block_baseline_reg,
                 .cid = bcc->curr_cid,
                 .flags = flags,
                 .domain = nl_bcc_sym_local_r
@@ -1325,11 +1325,29 @@ void nl_bcc_state_del(bcc_state* bcc) {
 }
 
 [[nodiscard]]
+entity_handle_mut nl_bcc_record_global_object(bcc_state* bcc, const str* name, const metatable* object) {
+    auto global_obj_handle = ent_pool_add(&bcc->pool_o, object);
+
+    if (!bcc_record_global(bcc, *name, (value) {
+        .n = global_obj_handle.id,
+        .tag = nl_vtag_obj
+    })) {
+        return (entity_handle_mut) {
+            .p = nullptr,
+            .id = 0
+        };
+    }
+
+    return global_obj_handle;
+}
+
+[[nodiscard]]
 program nl_bcc_compile_tu(bcc_state* bcc, const ast_unit* tu) {
     const auto ast_roots = (const ast_node*) tu->roots.data;
     const auto ast_roots_n = tu->roots.n;
 
     bcc->source = &tu->source;
+    bcc->entry_cid = bcc->chunks.n;
 
     bcc_result last_item_result = bcc_dud_result_v;
     const auto baseline_flags = bcc_flag_set_n(nl_bcc_cf_ok, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1);

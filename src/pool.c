@@ -12,7 +12,7 @@ static constexpr entity_handle nl_invalid_ent_handle = {
 
 
 [[nodiscard]]
-static inline size_t ent_pool_calc_gc_cost(size_t object_size, int32_t max_id, int32_t ratio_top, int32_t ratio_bottom) {
+NL_CXX_INLINE size_t ent_pool_calc_gc_cost(size_t object_size, int32_t max_id, int32_t ratio_top, int32_t ratio_bottom) {
     return (object_size * max_id * ratio_top) / ratio_bottom;
 }
 

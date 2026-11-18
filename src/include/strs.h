@@ -1,8 +1,8 @@
 #pragma once
 
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
+
+
+#include "basics.h"
 
 typedef struct nl_string_t string;
 
@@ -25,15 +25,15 @@ str str_from_cstr(const char* cstr);
 str str_from_string(const string* s);
 
 [[deprecated("This is a no-op function because str does not own its data.")]]
-static inline void str_del([[maybe_unused]] str* self) {}
+NL_CXX_INLINE void str_del([[maybe_unused]] str* self) {}
 
 [[nodiscard]]
-static inline bool str_empty(const str* self) {
+NL_CXX_INLINE bool str_empty(const str* self) {
     return self->n == 0 || !self->s;
 }
 
 [[nodiscard]]
-static inline size_t str_size(const str* self) {
+NL_CXX_INLINE size_t str_size(const str* self) {
     return self->n;
 }
 
@@ -74,22 +74,22 @@ string string_from_str(const str* sv);
 void string_del(void* self);
 
 [[nodiscard]]
-static inline bool string_empty(const string* self) {
+NL_CXX_INLINE bool string_empty(const string* self) {
     return !self->data || self->n == 0;
 }
 
 [[nodiscard]]
-static inline size_t string_size(const string* self) {
+NL_CXX_INLINE size_t string_size(const string* self) {
     return self->n;
 }
 
 [[nodiscard]]
-static inline const char* string_data(const string* self) {
+NL_CXX_INLINE const char* string_data(const string* self) {
     return self->data;
 }
 
 [[nodiscard]]
-static inline char* string_data_mut(string* self) {
+NL_CXX_INLINE char* string_data_mut(string* self) {
     return self->data;
 }
 

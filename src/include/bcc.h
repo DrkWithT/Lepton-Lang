@@ -57,7 +57,7 @@ typedef struct nl_bcc_state_t {
     dynbuf scopes;          // scope stack
     dynbuf loops;           // loop info stack with `bcc_loopinfo`s
     ent_pool pool_s;        // interned strings
-    ent_pool pool_o;        // objects
+    ent_pool pool_o;        // objects (metatables)
     ent_pool pool_c;        // closures
     dynbuf chunks;          // bytecode chunks
     value* gvals;           // pre-allocated superglobal array
@@ -77,9 +77,8 @@ bcc_state nl_bcc_state_new(int32_t max_strings, int32_t max_objects, int32_t max
 
 void nl_bcc_state_del(bcc_state* bcc);
 
-// ent_handle_mut nl_bcc_record_global(const str* name, const table* object); // todo: implement upon fully supporting tables
-
-// void nl_bcc_record_global_val(const str* name, const value* gv); // todo: implement upon fully supporting global funcs
+[[maybe_unused]]
+entity_handle_mut nl_bcc_record_global_object(bcc_state* bcc, const str* name, const metatable* object);
 
 [[nodiscard]]
 program nl_bcc_compile_tu(bcc_state* bcc, const ast_unit* tu);

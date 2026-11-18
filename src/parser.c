@@ -1,4 +1,4 @@
-#include <stdio.h>
+#include "basics.h"
 #include "parser.h"
 
 
@@ -326,7 +326,7 @@ ast_node* nl_parse_expr_call(parser* p, const str* source) {
 }
 
 [[nodiscard]]
-static inline ast_op tk_tag_to_unary_op(tk_tag t) {
+NL_CXX_INLINE ast_op tk_tag_to_unary_op(tk_tag t) {
     switch (t) {
         case nl_tk_op_nullish: return nl_ast_op_nullish;
         case nl_tk_op_sub: return nl_ast_op_negate;
@@ -395,7 +395,7 @@ ast_node* nl_parse_coalesce(parser* p, const str* source) {
 }
 
 [[nodiscard]]
-static inline ast_op tk_tag_to_factor_op(tk_tag t) {
+NL_CXX_INLINE ast_op tk_tag_to_factor_op(tk_tag t) {
     switch (t) {
         case nl_tk_op_mod: return nl_ast_op_mod;
         case nl_tk_op_mul: return nl_ast_op_mul;
@@ -442,7 +442,7 @@ ast_node* nl_parse_factor(parser* p, const str* source) {
 }
 
 [[nodiscard]]
-static inline ast_op tk_tag_to_term_op(tk_tag t) {
+NL_CXX_INLINE ast_op tk_tag_to_term_op(tk_tag t) {
     switch (t) {
         case nl_tk_op_add: return nl_ast_op_add;
         case nl_tk_op_sub: return nl_ast_op_sub;
@@ -488,7 +488,7 @@ ast_node* nl_parse_term(parser* p, const str* source) {
 }
 
 [[nodiscard]]
-static inline ast_op tk_tag_to_compare_op(tk_tag t) {
+NL_CXX_INLINE ast_op tk_tag_to_compare_op(tk_tag t) {
     switch (t) {
         case nl_tk_op_lt: return nl_ast_op_lt;
         case nl_tk_op_gt: return nl_ast_op_gt;
@@ -536,7 +536,7 @@ ast_node* nl_parse_compare(parser* p, const str* source) {
 }
 
 [[nodiscard]]
-static inline ast_op tk_tag_to_equality_op(tk_tag t) {
+NL_CXX_INLINE ast_op tk_tag_to_equality_op(tk_tag t) {
     switch (t) {
         case nl_tk_op_equals: return nl_ast_op_equals;
         case nl_tk_op_bang_equals: return nl_ast_op_bang_equals;
@@ -648,7 +648,7 @@ ast_node* nl_parse_logical_or(parser* p, const str* source) {
 }
 
 [[nodiscard]]
-static inline ast_op tk_tag_to_assign_op(tk_tag t) {
+NL_CXX_INLINE ast_op tk_tag_to_assign_op(tk_tag t) {
     switch (t) {
         case nl_tk_op_bind: return nl_ast_op_bind;
         case nl_tk_op_bind_mul: return nl_ast_op_bind_mul;

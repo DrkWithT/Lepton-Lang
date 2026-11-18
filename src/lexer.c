@@ -1,3 +1,4 @@
+#include "basics.h"
 #include "lexer.h"
 
 
@@ -22,22 +23,22 @@ typedef bool(*nl_lexical_fn)(char c);
 
 
 [[nodiscard]]
-static inline bool check_digit(char c) {
+NL_CXX_INLINE bool check_digit(char c) {
     return c >= '0' && c <= '9';
 }
 
 [[nodiscard]]
-static inline bool check_alpha(char c) {
+NL_CXX_INLINE bool check_alpha(char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
 }
 
 [[nodiscard]]
-static inline bool check_hex_digit(char c) {
+NL_CXX_INLINE bool check_hex_digit(char c) {
     return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F');
 }
 
 [[nodiscard]]
-static inline bool check_group(char c, const str* c_group) {
+NL_CXX_INLINE bool check_group(char c, const str* c_group) {
     for (size_t i = 0; i < c_group->n; i++) {
         if (c_group->s[i] == c) return true;
     }
@@ -46,17 +47,17 @@ static inline bool check_group(char c, const str* c_group) {
 }
 
 [[nodiscard]]
-static inline bool check_spaces(char c) {
+NL_CXX_INLINE bool check_spaces(char c) {
     return check_group(c, &neu_space_group);
 }
 
 [[nodiscard]]
-static inline bool check_like_op(char c) {
+NL_CXX_INLINE bool check_like_op(char c) {
     return check_group(c, &neu_op_group);
 }
 
 [[nodiscard]]
-static inline bool check_alphanum(char c) {
+NL_CXX_INLINE bool check_alphanum(char c) {
     return check_alpha(c) || check_digit(c);
 }
 

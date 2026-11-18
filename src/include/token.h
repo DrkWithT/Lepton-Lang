@@ -68,7 +68,7 @@ typedef struct nl_tk_t {
 } tk;
 
 [[nodiscard]]
-static inline tk mk_token(uint16_t begin_, uint16_t n_, uint16_t line_, uint16_t col_, tk_tag tag_) {
+NL_CXX_INLINE tk mk_token(uint16_t begin_, uint16_t n_, uint16_t line_, uint16_t col_, tk_tag tag_) {
     return (tk) {
         .begin = begin_,
         .n = n_,
@@ -79,7 +79,7 @@ static inline tk mk_token(uint16_t begin_, uint16_t n_, uint16_t line_, uint16_t
 }
 
 [[nodiscard]]
-static inline str tk_get_lexeme(const tk* self, const str* source) {
+NL_CXX_INLINE str tk_get_lexeme(const tk* self, const str* source) {
     return str_new(source->s + self->begin, self->n);
 }
 
