@@ -41,12 +41,13 @@ const lex_item neu_lexical_specials[] = {
 int main(int argc, const char* argv[]) {
     auto neu_app = nl_driver_new((driver_config) {
         .codename_cstr_literal = "NeuLang",
+        .neu_lexicals = neu_lexical_specials,
         .version_major = 0,
         .version_minor = 1,
         .version_patch = 0,
         .max_strings = 1024,
         .max_objects = 16384,
-        .max_closures = 16384
+        .max_closures = 8192
     });
 
     const auto status = nl_driver_run(&neu_app, argv, argc);

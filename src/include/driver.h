@@ -22,6 +22,7 @@ typedef struct nl_driver_t driver;
  */
 typedef struct nl_driver_config_t {
     const char* codename_cstr_literal;
+    const lex_item* neu_lexicals;
     uint32_t version_major;
     uint32_t version_minor;
     uint32_t version_patch;

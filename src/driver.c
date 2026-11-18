@@ -8,7 +8,7 @@ typedef enum nl_driver_opt_flag_t : uint32_t {
     driver_opt_show_help = 0x2,
     driver_opt_dump_bc = 0x4,
     driver_opt_run_bc = 0x8,
-    driver_opt_show_arg_err = 0x16
+    driver_opt_show_arg_err = 0x10
 } driver_opt_flag;
 
 [[nodiscard]]
@@ -17,6 +17,7 @@ driver nl_driver_new(driver_config config) {
 
     return (driver) {
         .compiler = driver_bcc_state,
+        .lexicals = config.neu_lexicals,
         .config = config,
         .file_path = nullptr,
         .option_flags = 0x0000,
