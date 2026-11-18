@@ -74,4 +74,5 @@ bc_dump*.txt
 
 # miscellaneous
 .DS_Store
+.vscode
 junk.neu
