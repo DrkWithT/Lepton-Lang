@@ -12,7 +12,8 @@ static constexpr size_t bcc_initial_chunk_var_ent_cap_v = 2;
 static constexpr size_t bcc_bc_byte_sz = sizeof(uint8_t);
 static constexpr uint16_t bcc_bc_max_cap_v = 0xffff;
 static constexpr uint16_t bcc_initial_global_cap_v = 8;
-static constexpr uint16_t bcc_max_arity = 256;
+static constexpr uint16_t bcc_initial_natives_cap_v = 8;
+static constexpr uint16_t bcc_max_arity = 255;
 static constexpr uint16_t bcc_max_errors = 3;
 
 [[nodiscard]]
@@ -482,6 +483,17 @@ const syminfo* bcc_record_local(bcc_state* bcc, str name) {
 void bcc_save_chunk_var_ent(bcc_state* bcc, var_ent entry) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
 
+    const auto var_entries = (const var_ent*) curr_chunk->vinfo.data;
+    const uint16_t var_entry_n = curr_chunk->vinfo.n;
+
+    for (uint16_t var_entry_id = 0; var_entry_id < var_entry_n; var_entry_id++) {
+        const var_ent* const checked_var_entry = (var_entries + var_entry_id);
+
+        if (checked_var_entry->cid == entry.cid && checked_var_entry->id == entry.id) {
+            return;
+        }
+    }
+
     dynbuf_push(&curr_chunk->vinfo, &entry);
 }
 
@@ -521,6 +533,10 @@ bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_
     } else if ((found_named_info = bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'B')) != nullptr) {
         if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
             bcc_emit_inst_ternary(bcc, nl_op_ld_upval, bcc->top_reg, found_named_info->n, found_named_info->cid);
+            bcc_save_chunk_var_ent(bcc, (var_ent) {
+                .id = found_named_info->n,
+                .cid = found_named_info->cid
+            });
 
             actual_info.n = bcc->top_reg++;
             actual_info.cid = bcc->curr_cid;
@@ -699,8 +715,7 @@ bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t fla
         bcc_emit_inst_binary(bcc, nl_op_ld_arg, param_local_reg, param_pos);
         bcc_save_chunk_var_ent(bcc, (var_ent) {
             .id = param_local_reg,
-            .cid = bcc->curr_cid,
-            .tag = nl_var_local
+            .cid = bcc->curr_cid
         });
     }
 
@@ -968,23 +983,35 @@ bcc_result bcc_emit_expr_assign(bcc_state* bcc, const ast_node* node, uint16_t f
         return dest_result;
     }
 
-    const auto dest_reg = bcc_normalize_to_local_reg(bcc, dest_result);
     const auto src_result = bcc_emit_next(bcc, assign_src, bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1));
-
+    
     if (!bcc_flag_check_n(src_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
         return src_result;
     }
 
     const auto src_reg = bcc_normalize_to_local_reg(bcc, src_result);
 
-    if (assign_runtime_op == nl_op_mov_rr) {
-        bcc_emit_inst_binary(bcc, assign_runtime_op, dest_reg, src_reg);
-    } else {
-        bcc_emit_inst_ternary(bcc, assign_runtime_op, dest_reg, dest_reg, src_reg);
-    }
+    if (dest_result.domain == nl_bcc_sym_local_r) {
+        const auto dest_reg = dest_result.n;
+    
+        if (assign_runtime_op == nl_op_mov_rr) {
+            bcc_emit_inst_binary(bcc, assign_runtime_op, dest_reg, src_reg);
+        } else {
+            bcc_emit_inst_ternary(bcc, assign_runtime_op, dest_reg, dest_reg, src_reg);
+        }
+    
+        bcc_update_curr_rc(bcc, src_reg + 1);
+        bcc->top_reg = dest_reg + 1;
+    } else if (dest_result.domain == nl_bcc_sym_foreign_local) {
+        if (assign_runtime_op == nl_op_mov_rr) {
+            bcc_emit_inst_ternary(bcc, nl_op_sto_upval, dest_result.n, dest_result.cid, src_reg);
+        } else {
+            // todo: support upvalue in-place MDAS opcodes...
+            bcc_report_err(bcc, "Compound assignment operators are unsupported for captured names.", bcc->line, bcc->col);
 
-    bcc_update_curr_rc(bcc, src_reg + 1);
-    bcc->top_reg = dest_reg + 1;
+            return bcc_dud_result_v;
+        }
+    }
 
     return dest_result;
 }
@@ -1006,13 +1033,13 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
 
         bcc->top_reg = cond_result_value_reg + 1;
 
-        // LOGIC IF condition exists...
-        // - Case 1:
-        /// Emit check and then cond jump... Record the jump location in `next_cond_check_ipos`.
-        /// Emit resulting expr's code and then a jump (which is recorded in `cond_ending_ips`).
-        /// Patch cond jump to go after the result expr's code.
-        // - Case 2:
-        /// Emit resulting expr. only.
+        // ? LOGIC IF condition exists...
+        // ? - Case 1:
+        // ?   Emit check and then cond jump... Record the jump location in `next_cond_check_ipos`.
+        // ?   Emit resulting expr's code and then a jump (which is recorded in `cond_ending_ips`).
+        // ? Patch cond jump to go after the result expr's code.
+        // ? - Case 2:
+        // ?   Emit resulting expr. only.
 
         if (cond_entry_check) {
             const auto entry_check_result = bcc_emit_next(bcc, cond_entry_check, cond_item_flags);
@@ -1104,6 +1131,11 @@ bcc_result bcc_emit_def_binding(bcc_state* bcc, tk name_tk, const ast_node* init
 
     if (bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1)) {
         const auto reserved_local_result = bcc_record_local(bcc, var_name);
+
+        bcc_save_chunk_var_ent(bcc, (var_ent) {
+            .id = reserved_local_result->n,
+            .cid = bcc->curr_cid
+        });
 
         bcc_emit_inst_unary(bcc, nl_op_store_nil, reserved_local_result->n);
         bcc_update_curr_rc(bcc, reserved_local_result->n + 1);
@@ -1303,8 +1335,11 @@ bcc_state nl_bcc_state_new(int32_t max_strings, int32_t max_objects, int32_t max
         .pool_c = temp_pool_c,
         .chunks = dynbuf_new(sizeof(chunk), 4, chunk_del),
         .gvals = calloc(bcc_initial_global_cap_v, sizeof(value)),
+        .natives = calloc(bcc_initial_natives_cap_v, sizeof(nl_native_t)),
         .gvals_cap = bcc_initial_global_cap_v,
         .gvals_n = 0,
+        .natives_cap = bcc_initial_natives_cap_v,
+        .natives_n = 0,
         .top_reg = 0,
         .curr_cid = 0,
         .entry_cid = 0,
@@ -1339,6 +1374,41 @@ entity_handle_mut nl_bcc_record_global_object(bcc_state* bcc, const str* name, c
     }
 
     return global_obj_handle;
+}
+
+bool nl_bcc_record_native_callable(bcc_state* bcc, const str* name, nl_native_t f, uint8_t arity) {
+    const auto next_trampoline_chunk_id = bcc_start_chunk(bcc);
+
+    bcc->curr_cid = next_trampoline_chunk_id;
+
+    const auto next_native_id = bcc->natives_n;
+    const auto native_capacity = bcc->natives_cap;
+    const auto next_native_capacity = (native_capacity * 3) / 2;
+
+    if (next_native_id >= native_capacity) {
+        auto next_native_buf = realloc(bcc->natives, next_native_capacity * sizeof(nl_native_t));
+
+        if (!next_native_buf) {
+            NL_PANIC("Failed to grow native callable buffer here.", __FILE__, __LINE__)
+        }
+
+        bcc->natives = next_native_buf;
+        bcc->natives_cap = next_native_capacity;
+    }
+
+    bcc->natives[next_native_id] = f;
+    bcc->natives_n++;
+
+    bcc_emit_inst_binary(bcc, nl_op_call_n, next_native_id, arity);
+    bcc_emit_inst_unary(bcc, nl_op_ld_accr, 0);
+    bcc_emit_inst_unary(bcc, nl_op_ret, 0);
+    bcc->natives_n++;
+
+    NL_ALLOC(metatable, temp_metatable, __FILE__, __LINE__);
+    temp_metatable->ent_id = next_trampoline_chunk_id;
+    temp_metatable->is_native_or_closure = true;
+
+    return nl_bcc_record_global_object(bcc, name, temp_metatable).p != nullptr;
 }
 
 [[nodiscard]]

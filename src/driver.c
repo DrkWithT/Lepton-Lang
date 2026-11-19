@@ -29,6 +29,10 @@ entity_handle_mut nl_driver_add_global_object(driver* d, str global_name, const 
     return nl_bcc_record_global_object(&d->compiler, &global_name, object);
 }
 
+bool nl_driver_add_native_function(driver *d, str name, nl_native_t f, uint8_t arity) {
+    return nl_bcc_record_native_callable(&d->compiler, &name, f, arity);
+}
+
 void nl_driver_del(driver* d) {
     nl_bcc_state_del(&d->compiler);
 }

@@ -11,13 +11,6 @@ typedef struct nl_metatable_t metatable;
 /**
  ### ABOUT
 
- Fwd. declaration for driver state. The driver is the encapsulation of all Neu language implementation details, wrapping the bytecode compiler, interpreter, and possibly a JIT in the far future.
- */
-typedef struct nl_driver_t driver;
-
-/**
- ### ABOUT
-
  Configuration arguments to the "Neu" driver. These can affect memory overhead of how many objects, etc. are stored by the VM.
  */
 typedef struct nl_driver_config_t {
@@ -31,6 +24,11 @@ typedef struct nl_driver_config_t {
     uint32_t max_closures;
 } driver_config;
 
+/**
+ ### ABOUT
+
+ Declaration for driver state. The driver is the encapsulation of all Neu language implementation details, wrapping the bytecode compiler, interpreter, and possibly a JIT in the far future.
+ */
 typedef struct nl_driver_t {
     bcc_state compiler;
     driver_config config;
@@ -44,6 +42,8 @@ typedef struct nl_driver_t {
 driver nl_driver_new(driver_config config);
 
 entity_handle_mut nl_driver_add_global_object(driver* d, str global_name, const metatable* object);
+
+bool nl_driver_add_native_function(driver *d, str name, nl_native_t f, uint8_t arity);
 
 void nl_driver_del(driver* d);
 

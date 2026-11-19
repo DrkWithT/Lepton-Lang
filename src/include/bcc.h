@@ -3,6 +3,7 @@
 #include "strs.h"
 #include "dynbuf.h"
 #include "ast.h"
+#include "table.h"
 #include "bytecode.h"
 
 
@@ -61,9 +62,12 @@ typedef struct nl_bcc_state_t {
     ent_pool pool_c;        // closures
     dynbuf chunks;          // bytecode chunks
     value* gvals;           // pre-allocated superglobal array
+    nl_native_t* natives;   // pre-allocated native function pointers
     const str* source;
     uint16_t gvals_cap;
     uint16_t gvals_n;
+    uint16_t natives_cap;
+    uint16_t natives_n;
     uint16_t top_reg;   // next register (stack allocated position)
     uint16_t curr_cid;      // currently emitting chunk ID
     uint16_t entry_cid;     // main chunk ID (`0`)
@@ -79,6 +83,8 @@ void nl_bcc_state_del(bcc_state* bcc);
 
 [[maybe_unused]]
 entity_handle_mut nl_bcc_record_global_object(bcc_state* bcc, const str* name, const metatable* object);
+
+bool nl_bcc_record_native_callable(bcc_state* bcc, const str* name, nl_native_t f, uint8_t arity);
 
 [[nodiscard]]
 program nl_bcc_compile_tu(bcc_state* bcc, const ast_unit* tu);

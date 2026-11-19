@@ -3,10 +3,15 @@
 #include "dynbuf.h"
 #include "pool.h"
 #include "value.h"
-#include "table.h"
 #include "ic.h"
 
 
+
+/// Fwd. decl for Neu VM context type.
+typedef struct nl_context_t context;
+
+/// Fwd. decl for builtin, native functions in the Neu VM.
+typedef bool(*nl_native_t)(context* c, uint8_t argc);
 
 typedef enum nl_op_t : uint8_t {
     nl_op_nop,          // pc++
@@ -69,8 +74,11 @@ typedef struct nl_program_t {
     ent_pool pool_c;    // closures
     dynbuf chunks;
     value* gv;          // global values buffer
+    nl_native_t* natives;   // buffer of native function pointers
     uint16_t gv_len;
     uint16_t gv_cap;
+    uint16_t natives_len;
+    uint16_t natives_cap;
     uint16_t entry_cid;
 } program;
 

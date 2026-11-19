@@ -1,4 +1,6 @@
 #include "driver.h"
+#include "context.h"
+#include "var_scope.h"
 
 
 
@@ -38,6 +40,32 @@ const lex_item neu_lexical_specials[] = {
     (lex_item) { .s = {.s = nullptr, .n = 0}, .tag = nl_tk_unknown }
 };
 
+bool neu_native_assert(context* c, uint8_t arg_count) {
+    const auto tested_value = c->arg_regs[0];
+    const auto failure_msg = c->arg_regs[1];
+
+    if (tested_value.tag != nl_vtag_bool || tested_value.b != 0x01) {
+        const auto msg_string_handle = ent_pool_get(&c->pool_s, failure_msg.n);
+        const auto msg_string_p = (const string*) msg_string_handle.p;
+
+        if (msg_string_p) {
+            fprintf(stdout, "\x1b[1;31mASSERT FAILED:\x1b[0m ");
+            string_output(stdout, msg_string_p);
+            fprintf(stdout, "\n");
+        } else {
+            fprintf(stderr, "\x1b[1;31mASSERT FAILED:\x1b[0m Expected true value here.\n");
+        }
+        
+        return false;
+    }
+
+    auto curr_scope_frame = (scope*) dynbuf_last_mut(&c->scopes);
+
+    curr_scope_frame->vbase[0] = (value) { .b = 0, .tag = nl_vtag_nil };
+
+    return true;
+}
+
 int main(int argc, const char* argv[]) {
     auto neu_app = nl_driver_new((driver_config) {
         .codename_cstr_literal = "NeuLang",
@@ -49,6 +77,8 @@ int main(int argc, const char* argv[]) {
         .max_objects = 16384,
         .max_closures = 8192
     });
+
+    nl_driver_add_native_function(&neu_app, (str) { .s = "assert", .n = 6 }, neu_native_assert, 2);
 
     const auto status = nl_driver_run(&neu_app, argv, argc);
 

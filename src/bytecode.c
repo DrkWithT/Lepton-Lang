@@ -94,8 +94,11 @@ program program_dud() {
         },
         .chunks = dynbuf_dud(),
         .gv = nullptr,
+        .natives = nullptr,
         .gv_cap = 0,
         .gv_len = 0,
+        .natives_cap = 0,
+        .natives_len = 0,
         .entry_cid = 0
     };
 }
@@ -110,6 +113,11 @@ void program_del(void* pg) {
     if (program_self->gv) {
         free(program_self->gv);
         program_self->gv = nullptr;
+    }
+
+    if (program_self->natives) {
+        free(program_self->natives);
+        program_self->natives = nullptr;
     }
 
     dynbuf_del(&program_self->chunks);
