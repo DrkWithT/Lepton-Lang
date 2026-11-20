@@ -15,7 +15,9 @@ target_sources(neu_impl PRIVATE
     "${NEU_SRCS}/table.c"
     "${NEU_SRCS}/bytecode.c"
     "${NEU_SRCS}/bcc.c"
-    "${NEU_SRCS}/var_scope.c"
+    "${NEU_SRCS}/closures.c"
+    "${NEU_SRCS}/context.c"
+    "${NEU_SRCS}/dispatcher.c"
     "${NEU_SRCS}/driver.c"
 )
 

@@ -1,6 +1,7 @@
 #include "parser.h"
 #include "driver.h"
-
+#include "context.h"
+#include "dispatcher.h"
 
 
 typedef enum nl_driver_opt_flag_t : uint32_t {
@@ -81,8 +82,13 @@ void driver_show_version_and_exit(driver* d) {
 
 [[nodiscard]]
 bool driver_exec_bc(driver* d, program* pg) {
-    // todo: implement VM
-    return false;
+    auto ctx = context_new(*pg);
+
+    *pg = program_dud();
+
+    const auto run_status_flags = nl_execute_with_context(&ctx);
+
+    return (run_status_flags & nl_ctxf_ok) != 0;
 }
 
 [[nodiscard]]
@@ -116,7 +122,7 @@ static string read_file(const char* file_path) {
 int nl_driver_run(driver* d, const char* argv[], int arg_count) {
     driver_process_argv(d, argv, arg_count);
 
-    if (d->option_flags & driver_opt_show_arg_err) {
+    if (d->option_flags & driver_opt_show_arg_err || d->option_flags == 0) {
         return 1;
     } else if (d->option_flags & driver_opt_show_help) {
         driver_show_help_and_exit(d);
@@ -160,15 +166,20 @@ int nl_driver_run(driver* d, const char* argv[], int arg_count) {
 
     if (d->option_flags & driver_opt_dump_bc) {
         program_output(stdout, &bc_program);
-    } else if (!driver_exec_bc(d, &bc_program)) {
-        puts("\x1b[1;31mERROR:\x1b[0m Failed to successfully execute script.");
+    }
 
+    if ((d->option_flags & driver_opt_run_bc) == 0) {
         program_del(&bc_program);
         ast_unit_del(&ast);
         string_del(&file_source);
-
-        return 1;
+    
+        return 0;
     }
 
-    return 0;
+    const bool run_ok = driver_exec_bc(d, &bc_program);
+
+    ast_unit_del(&ast);
+    string_del(&file_source);
+
+    return run_ok ? 0 : 1;
 }

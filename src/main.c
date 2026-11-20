@@ -1,6 +1,5 @@
 #include "driver.h"
 #include "context.h"
-#include "var_scope.h"
 
 
 
@@ -59,9 +58,7 @@ bool neu_native_assert(context* c, uint8_t arg_count) {
         return false;
     }
 
-    auto curr_scope_frame = (scope*) dynbuf_last_mut(&c->scopes);
-
-    curr_scope_frame->vbase[0] = (value) { .b = 0, .tag = nl_vtag_nil };
+    c->accr = (value) { .b = 0, .tag = nl_vtag_nil };
 
     return true;
 }
