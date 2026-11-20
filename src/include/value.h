@@ -11,7 +11,8 @@ typedef enum nl_vtag_t {
     nl_vtag_int,
     nl_vtag_num,
     nl_vtag_str,
-    nl_vtag_obj
+    nl_vtag_obj,
+    nl_vtag_closure,
 } vtag;
 
 typedef struct nl_value_t {

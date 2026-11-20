@@ -1,14 +1,23 @@
 #pragma once
 
-#include "var_scope.h"
 #include "bytecode.h"
 
 
 
+typedef struct nl_upvalue_t {
+    value* ref;
+    value v;
+    uint16_t cid;
+    uint16_t id;
+    bool closed;
+} upvalue;
+
 typedef struct nl_closure_t {
-    scope* env;
+    upvalue* upvals;
     chunk* bc;
-    bool env_taken;  // `true` if a `var_scope` has moved ownership to a closure, implying that closure must cleanup its `env` ptr AND the upvals are closed.
+    uint16_t upvals_cap;
+    uint16_t cid;
+    bool persist;
 } closure;
 
 void closure_del(void* c);

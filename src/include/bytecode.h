@@ -26,6 +26,7 @@ typedef enum nl_op_t : uint8_t {
     nl_op_ld_arg,       // load_arg_slot dest <arg-ID>
     nl_op_ld_upval,     // load_upvar dest <upval-ID> <upval-CID>
     nl_op_sto_upval,    // store_upvar <upval-ID> <upval-CID> src
+    nl_op_close_upvals, // close_upvalues
     nl_op_ld_accr,      // load_accr dest
     nl_op_test_nil,     // test_nil dest
     nl_op_neg_num,      // numeric_neg dest
@@ -52,7 +53,7 @@ typedef enum nl_op_t : uint8_t {
 } op;
 
 typedef struct nl_chunk_t {
-    dynbuf vinfo;       // buffer of variable locators (no deleter)
+    uint32_t* upval_entries;    // list of masked `u32`s: lower u16 has CID, upper has slot-ID
     uint8_t* bc;        // bytecode
     value* kd;          // constants data
     ic* icv;            // property-access inline caches
@@ -63,6 +64,7 @@ typedef struct nl_chunk_t {
     uint16_t ic_len;
     uint16_t ic_cap;
     uint16_t regs_n;
+    uint16_t upvals_n;
     uint8_t arity;
 } chunk;
 

@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include "bcc.h"
-#include "var_scope.h"
 #include "closures.h"
 
 
@@ -133,7 +132,6 @@ uint16_t bcc_start_chunk(bcc_state* bcc) {
     const uint16_t next_cid = bcc->chunks.n;
 
     chunk next_chunk = {
-        .vinfo = dynbuf_new(sizeof(var_ent), bcc_initial_chunk_var_ent_cap_v, nullptr),
         .bc = calloc(bcc_initial_chunk_cap_v, bcc_bc_byte_sz),
         .code_cap = bcc_initial_chunk_cap_v,
         .code_len = 0,
@@ -277,6 +275,41 @@ void nl_bcc_place_ic(bcc_state* bcc, uint16_t ip, ic temp_ic) {
 
     curr_chunk->icv[next_ic_len] = temp_ic;
     curr_chunk->ic_len++;
+}
+
+void bcc_patch_upvals_n(bcc_state* bcc) {
+    const symscope* curr_scope = dynbuf_last(&bcc->scopes);
+    const syminfo* const curr_infos = curr_scope->infos.data;
+    chunk* curr_chunk = bcc->chunks.data + bcc->curr_cid;
+    const uint16_t curr_infos_n = curr_scope->infos.n;
+
+    uint32_t* upval_metadata = calloc(4, sizeof(uint32_t));
+    uint16_t upval_cap = 4;
+    uint16_t upval_count = 0;
+
+    for (uint16_t curr_info_pos = 0; curr_info_pos < curr_infos_n; curr_info_pos++) {
+        if ((curr_infos + curr_info_pos)->tag == nl_bcc_sym_foreign_local) {
+            const auto curr_upval_cid = (curr_infos + curr_info_pos)->cid;
+            const uint16_t curr_upval_slot = (curr_infos + curr_info_pos)->n;
+
+            if (upval_count >= upval_cap) {
+                const uint16_t upval_cap_2 = (3 * upval_cap) / 2;
+                uint32_t* upval_metadata_2 = realloc(upval_metadata, sizeof(uint32_t) * upval_cap_2);
+
+                if (!upval_metadata_2) {
+                    NL_PANIC("Failed to grow buffer of upvalue data here.", __FILE__, __LINE__)
+                }
+
+                upval_metadata = upval_metadata_2;
+                upval_cap = upval_cap_2;
+            }
+
+            upval_metadata[upval_count] = curr_upval_cid | (curr_upval_slot << 16);
+            upval_count++;
+        }
+    }
+
+    curr_chunk->upvals_n = upval_count;
 }
 
 void bcc_start_scope(bcc_state* bcc, str scope_name) {
@@ -480,22 +513,22 @@ const syminfo* bcc_record_local(bcc_state* bcc, str name) {
 }
 
 // ! IMPORTANT: upvalues are pre-recorded per chunk in vinfos as a var_ent for upvalue having `cid = assoc-scope -> assoc-function -> func-chunk-ID` and local-reg "offset"
-void bcc_save_chunk_var_ent(bcc_state* bcc, var_ent entry) {
-    auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
+// void bcc_save_chunk_var_ent(bcc_state* bcc, var_ent entry) {
+//     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
 
-    const auto var_entries = (const var_ent*) curr_chunk->vinfo.data;
-    const uint16_t var_entry_n = curr_chunk->vinfo.n;
+//     const auto var_entries = (const var_ent*) curr_chunk->vinfo.data;
+//     const uint16_t var_entry_n = curr_chunk->vinfo.n;
 
-    for (uint16_t var_entry_id = 0; var_entry_id < var_entry_n; var_entry_id++) {
-        const var_ent* const checked_var_entry = (var_entries + var_entry_id);
+//     for (uint16_t var_entry_id = 0; var_entry_id < var_entry_n; var_entry_id++) {
+//         const var_ent* const checked_var_entry = (var_entries + var_entry_id);
 
-        if (checked_var_entry->cid == entry.cid && checked_var_entry->id == entry.id) {
-            return;
-        }
-    }
+//         if (checked_var_entry->cid == entry.cid && checked_var_entry->id == entry.id) {
+//             return;
+//         }
+//     }
 
-    dynbuf_push(&curr_chunk->vinfo, &entry);
-}
+//     dynbuf_push(&curr_chunk->vinfo, &entry);
+// }
 
 
 [[nodiscard]]
@@ -713,14 +746,11 @@ bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t fla
         const auto param_local_reg = bcc_record_local(bcc, param_name)->n;
 
         bcc_emit_inst_binary(bcc, nl_op_ld_arg, param_local_reg, param_pos);
-        bcc_save_chunk_var_ent(bcc, (var_ent) {
-            .id = param_local_reg,
-            .cid = bcc->curr_cid
-        });
     }
 
     const auto body_flags = bcc_flag_set_n(bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1), (uint16_t[]) { nl_bcc_cf_started_fun_body }, 1);
     const auto checked_body_result = bcc_emit_next(bcc, lambda_body, body_flags);
+
     if (!bcc_flag_check_n(checked_body_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
         string_del(&internal_lambda_name);
         chunk_del((chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid));
@@ -732,7 +762,11 @@ bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t fla
     }
 
     // ! Put trailing `ret` in case the user forgets to put their result expression. The block emitter should always force its last (result) value into `acc` via `nl_op_ret`.
+    bcc_emit_inst_nonary(bcc, nl_op_close_upvals);
     bcc_emit_inst_unary(bcc, nl_op_ret, checked_body_result.n);
+
+    // ! Pre-count upvalues of chunk / function.
+    bcc_patch_upvals_n(bcc);
 
     string_del(&internal_lambda_name);
     bcc_end_scope(bcc);
@@ -1132,11 +1166,6 @@ bcc_result bcc_emit_def_binding(bcc_state* bcc, tk name_tk, const ast_node* init
     if (bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1)) {
         const auto reserved_local_result = bcc_record_local(bcc, var_name);
 
-        bcc_save_chunk_var_ent(bcc, (var_ent) {
-            .id = reserved_local_result->n,
-            .cid = bcc->curr_cid
-        });
-
         bcc_emit_inst_unary(bcc, nl_op_store_nil, reserved_local_result->n);
         bcc_update_curr_rc(bcc, reserved_local_result->n + 1);
 
@@ -1234,6 +1263,7 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
 
     if (bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_started_fun_body }, 1)) {
         if (last_value_reg >= 0) {
+            bcc_emit_inst_nonary(bcc, nl_op_close_upvals);
             bcc_emit_inst_unary(bcc, nl_op_ret, last_value_reg);
 
             return (bcc_result) {
@@ -1243,6 +1273,7 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
                 .domain = nl_bcc_sym_local_r
             };
         } else {
+            bcc_emit_inst_nonary(bcc, nl_op_close_upvals);
             bcc_emit_inst_unary(bcc, nl_op_store_nil, block_baseline_reg);
             bcc_emit_inst_unary(bcc, nl_op_ret, block_baseline_reg);
 
@@ -1292,6 +1323,7 @@ bcc_result bcc_emit_stmt_ret(bcc_state* bcc, const ast_node* node, uint16_t flag
         return bcc_dud_result_v;
     }
 
+    bcc_emit_inst_nonary(bcc, nl_op_close_upvals);
     bcc_emit_inst_unary(bcc, nl_op_ret, reserved_ret_reg);
     bcc_update_curr_rc(bcc, pre_ret_top_reg); // ! save register window space despite the stack-reg-alloc per result if duped returns are written by the user!
 

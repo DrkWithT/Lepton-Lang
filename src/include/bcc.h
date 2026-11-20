@@ -68,7 +68,7 @@ typedef struct nl_bcc_state_t {
     uint16_t gvals_n;
     uint16_t natives_cap;
     uint16_t natives_n;
-    uint16_t top_reg;   // next register (stack allocated position)
+    uint16_t top_reg;       // next register (stack allocated position)
     uint16_t curr_cid;      // currently emitting chunk ID
     uint16_t entry_cid;     // main chunk ID (`0`)
     uint16_t errors;

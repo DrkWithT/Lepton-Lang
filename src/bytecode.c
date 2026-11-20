@@ -19,6 +19,7 @@ static const char* const bc_opcode_names_v[] = {
     "ld_arg",
     "ld_upval",
     "sto_upval",
+    "nl_op_close_upvals",
     "ld_accr",
     "test_nil",
     "neg_num",
@@ -47,7 +48,6 @@ static const char* const bc_opcode_names_v[] = {
 void chunk_del(void *c) {
     auto chunk_self = (chunk*)c;
 
-    dynbuf_del(&chunk_self->vinfo);
     free(chunk_self->icv);
     chunk_self->icv = nullptr;
     free(chunk_self->kd);
@@ -188,6 +188,7 @@ void chunk_output(FILE* os, const chunk* c) {
             case nl_op_ld_arg: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
             case nl_op_ld_upval: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
             case nl_op_sto_upval: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
+            case nl_op_close_upvals: inst_output(os, chunk_bc + bc_byte_pos, 0); bc_byte_pos++; break;
             case nl_op_ld_accr: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
             case nl_op_test_nil: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
             case nl_op_neg_num: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
