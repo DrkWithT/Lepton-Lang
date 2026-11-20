@@ -6,7 +6,7 @@
 void scope_del(void *s) {
     auto scope_self = (scope*)s;
 
-    if (scope_self->proxy) {
+    if (scope_self->proxy || scope_self->mode != nl_sc_mode_closed) {
         return;
     }
 

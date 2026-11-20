@@ -533,10 +533,10 @@ bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_
     } else if ((found_named_info = bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'B')) != nullptr) {
         if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
             bcc_emit_inst_ternary(bcc, nl_op_ld_upval, bcc->top_reg, found_named_info->n, found_named_info->cid);
-            bcc_save_chunk_var_ent(bcc, (var_ent) {
-                .id = found_named_info->n,
-                .cid = found_named_info->cid
-            });
+            // bcc_save_chunk_var_ent(bcc, (var_ent) {
+            //     .id = found_named_info->n,
+            //     .cid = found_named_info->cid
+            // });
 
             actual_info.n = bcc->top_reg++;
             actual_info.cid = bcc->curr_cid;
