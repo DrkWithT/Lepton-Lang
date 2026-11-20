@@ -8,7 +8,6 @@
 constexpr size_t nl_default_stack_size = 8192;
 constexpr size_t nl_default_arg_regs_n = 255;
 constexpr size_t nl_default_max_scope_depth = 64;
-constexpr size_t nl_default_scope_cap = 2048;
 
 
 
@@ -22,27 +21,19 @@ context context_new(program pg) {
     NL_ALLOC_N(nl_default_stack_size, value, vm_stack_buf, __FILE__, __LINE__)
     NL_ALLOC_N(nl_default_arg_regs_n, value, vm_arg_regs_buf, __FILE__, __LINE__)
 
-    auto vm_pool_sc = ent_pool_new(sizeof(scope), nl_default_scope_cap, scope_del); // ? managed scopes
-    scope* vm_initial_scope_p = nullptr;
+    auto frame_stack = dynbuf_new(sizeof(context_frame), nl_default_max_scope_depth, dud_deleter);
 
     {
-        scope vm_initial_scope_frame = {
-            .vars = vm_initial_chunk->vinfo.data,
-            .parent = nullptr,
-            .vbase = vm_stack_buf,
-            .closed_uvbuf = nullptr,
-            .last_stack_base = 0,
-            .pool_id = 0,
-            .cid = pg.entry_cid,
-            .vars_n = vm_initial_chunk->vinfo.n,
-            .mode = nl_sc_mode_normal,
-            .proxy = false,
+        context_frame top_frame = {
+            .caller_base_ip = nullptr,
+            .caller_ip = nullptr,
+            .caller_kp = nullptr,
+            .caller_stack_base = vm_stack_buf,
+            .closure_id = -1,
+            .cid = -1
         };
-        
-        auto initial_scope_handle = ent_pool_add(&vm_pool_sc, &vm_initial_scope_frame);
 
-        vm_initial_scope_p = (scope*) initial_scope_handle.p;
-        vm_initial_scope_p->pool_id = initial_scope_handle.id;
+        dynbuf_push(&frame_stack, &top_frame);
     }
 
     return (context) {
@@ -50,7 +41,7 @@ context context_new(program pg) {
         .pool_o = pg.pool_o,
         .pool_c = pg.pool_c,
         .chunks = pg.chunks,
-        .curr_scope = vm_initial_scope_p,
+        .frames = frame_stack,
         .stack = vm_stack_buf,
         .gv = pg.gv,
         .arg_regs = vm_arg_regs_buf,
@@ -58,6 +49,7 @@ context context_new(program pg) {
         .ip = vm_initial_ip,
         .kp = vm_initial_kp,
         .icp = vm_initial_icp,
+        .stack_bp = vm_stack_buf,
         .natives = pg.natives,
         .accr = { .b = 0, .tag = nl_vtag_nil },
         .stack_sz = nl_default_stack_size,
@@ -73,6 +65,7 @@ void context_del(context* c) {
     ent_pool_del(&c->pool_c);
 
     dynbuf_del(&c->chunks);
+    dynbuf_del(&c->frames);
 
     if (c->stack) {
         free(c->stack);
@@ -95,59 +88,89 @@ void context_del(context* c) {
     }
 }
 
+// ! IMPORTANT: Only used in `context_try_closurify`. 
 [[nodiscard]]
-int32_t context_try_closurify(context* c, uint16_t chunk_id) {
-    ; // todo: implement
+upvalue context_mk_upvalue_from(context* c, uint16_t uv_cid, uint16_t uv_reg_slot) {
+    context_frame* frame_it = dynbuf_last_mut(&c->frames);
+    context_frame* const frame_base = c->frames.data;
+
+    for (; frame_it->caller_stack_base != nullptr && frame_it->cid != uv_cid; frame_it--) {}
+
+    if (!frame_it->caller_stack_base) {
+        NL_PANIC("Invalid capture of variable could not be resolved here. This may be an implementation bug.", __FILE__, __LINE__)
+    }
+
+    return (upvalue) {
+        .ref = frame_it->caller_stack_base,
+        .v = { .b = 0, .tag = nl_vtag_nil },
+        .cid = frame_it->cid,
+        .id = uv_reg_slot,
+        .closed = false
+    };
 }
 
-// ! IMPORTANT: Expects callee `value` to contain an object ID of a closure which contains the chunk ID.
+[[nodiscard]]
+value context_try_closurify(context* c, uint16_t chunk_id) {
+    chunk* closure_chunk = c->chunks.data + chunk_id;
+    const uint32_t* upvalue_metadata = closure_chunk->upval_entries;
+    const auto upvalue_count = closure_chunk->upvals_n;
+    NL_ALLOC_N(upvalue_count, upvalue, upval_buf, __FILE__, __LINE__)
+
+    for (uint16_t upval_slot = 0; upval_slot < upvalue_count; upval_slot++) {
+        const uint16_t upvalue_cid = upvalue_metadata[upval_slot] & 0xffff;
+        const uint16_t upvalue_slot = (upvalue_metadata[upval_slot] & 0xffff0000) >> 16;
+
+        upval_buf[upval_slot] = context_mk_upvalue_from(c, upvalue_cid, upval_slot);
+    }
+
+    closure temp_closure = {
+        .bc = closure_chunk,
+        .upvals = upval_buf,
+        .upvals_cap = upvalue_count,
+        .cid = chunk_id,
+        .persist = false
+    };
+
+    auto closure_handle = ent_pool_add(&c->pool_c, &temp_closure);
+
+    if (closure_handle.id < 0) {
+        return (value) { .b = 0, .tag = nl_vtag_nil };
+    }
+
+    return (value) {
+        .n = closure_handle.id,
+        .tag = nl_vtag_closure
+    };
+}
+
 bool context_try_invoke(context* c, value callee, uint8_t arity) {
-    if (callee.tag != nl_vtag_obj) {
+    if (callee.tag != nl_vtag_closure) {
         return false;
     }
 
-    const auto curr_env = c->curr_scope;
-    const auto curr_chunk = (chunk*) dynbuf_get_mut(&c->chunks, curr_env->cid);
-    auto closure_handle = ent_pool_get_mut(&c->pool_c, callee.n);
-    auto closure_ref = (closure*) closure_handle.p;
-
-    if (!closure_ref) {
-        return false;
-    }
-
-    chunk* const closure_chunk = closure_ref->bc;
+    const chunk* const caller_chunk = c->chunks.data + ((const context_frame*) dynbuf_last(&c->frames))->cid;
+    closure* target_closure = ent_pool_get_mut_unchecked(&c->pool_c, callee.n).p;
 
     {
-        scope closure_proxy_scope = *closure_ref->env;
+        context_frame target_frame = {
+            .caller_base_ip = c->base_ip,
+            .caller_ip = c->ip + 1,
+            .caller_kp = c->kp,
+            .caller_stack_base = c->stack_bp,
+            .closure_id = callee.n,
+            .cid = target_closure->cid
+        };
 
-        // todo: add `nl_op_mkcls_ret` bytecode op which runs upon closure return for functions that have function expressions anywhere in a returned value
-        // ? 1. Add BCC hint bitflag for detection of sub-expressions in returns.
-        // ? 2. Update BCC to emit this opcode just before finishing a lambda's code IFF there was a (proxy) returned lambda anywhere in any return.
-        // ? 3. Implement context helper method for `mk_cls_ret` opcode.
-        if (!closure_ref->env_taken) {
-            closure_proxy_scope.vbase = c->stack + curr_env->last_stack_base + curr_chunk->regs_n;
-            closure_proxy_scope.last_stack_base = curr_env->last_stack_base + curr_chunk->regs_n;
-        } // todo: lifted closures should allocate slots for all their chunk registers: `regs_n`
-
-        closure_proxy_scope.proxy = true;
-
-        auto next_head_scope_handle = ent_pool_add(&c->pool_sc, &closure_proxy_scope);
-
-        if (next_head_scope_handle.id < 0) {
-            return false;
-        }
-
-        auto next_head_scope = (scope*) next_head_scope_handle.p;
-
-        next_head_scope->parent = curr_env;
-        next_head_scope->pool_id = next_head_scope_handle.id;
-        c->curr_scope = next_head_scope;
+        dynbuf_push(&c->frames, &target_frame);
     }
 
-    c->base_ip = closure_chunk->bc;
-    c->ip = closure_chunk->bc;
-    c->kp = closure_chunk->kd;
-    c->icp = closure_chunk->icv;
+    chunk* const target_chunk = target_closure->bc;
+
+    c->base_ip = target_chunk->bc;
+    c->ip = target_chunk->bc;
+    c->kp = target_chunk->kd;
+    c->icp = target_chunk->icv;
+    c->stack_bp = c->stack_bp + caller_chunk->regs_n;
 
     return true;
 }
@@ -200,20 +223,15 @@ bool context_test_equality(const context* c, value lhs, value rhs) {
 }
 
 [[nodiscard]]
-const value* context_get_foreign_variable(const context* c, uint16_t cid, uint16_t local_reg) {
-    auto scope_it = (const scope*) c->curr_scope;
+const value* context_get_upvalue(const context* c, uint16_t uv_cid, uint16_t uv_local_reg) {
+    const closure* const callee = ent_pool_get_unchecked(&c->pool_c, ((const context_frame*) dynbuf_last(&c->frames))->closure_id).p;
 
-    scope_it = scope_it->parent;
+    const upvalue* callee_upvalue_it = callee->upvals;
+    const upvalue* const callee_upvalue_end = callee->upvals + callee->upvals_cap;
 
-    // ? Bubble up scopes until the global scope is reached: search until a corresponding one to the function is found. Then try lookup of the local slot / register.
-    for (; scope_it != nullptr && scope_it->cid != cid; scope_it = scope_it->parent) {}
-
-    const var_ent* scope_var_entry_it = scope_it->vars;
-    const var_ent* const scope_var_entry_end = scope_it->vars + scope_it->vars_n;
-
-    for (; scope_var_entry_it < scope_var_entry_end; scope_var_entry_it++) {
-        if (scope_var_entry_it->id == local_reg) {
-            return scope_it->vbase + local_reg;
+    for (; callee_upvalue_it != callee_upvalue_end; callee_upvalue_it++) {
+        if (callee_upvalue_it->cid == uv_cid && callee_upvalue_it->id == uv_local_reg) {
+            return callee_upvalue_it->ref;
         }
     }
 
@@ -221,23 +239,37 @@ const value* context_get_foreign_variable(const context* c, uint16_t cid, uint16
 }
 
 [[nodiscard]]
-bool context_set_foreign_variable(context* c, uint16_t uv_cid, uint16_t uv_local_reg, value v) {
-    auto scope_it = (scope*) c->curr_scope;
+bool context_set_upvalue(context* c, uint16_t uv_cid, uint16_t uv_local_reg, value v) {
+    closure* const callee = ent_pool_get_mut(&c->pool_c, ((const context_frame*) dynbuf_last(&c->frames))->closure_id).p;
 
-    scope_it = scope_it->parent;
+    upvalue* callee_upvalue_it = callee->upvals;
+    upvalue* const callee_upvalue_end = callee->upvals + callee->upvals_cap;
 
-    // ? Bubble up scopes until the global scope is reached: search until a corresponding one to the function is found. Then try lookup of the local slot / register.
-    for (; scope_it != nullptr && scope_it->cid != uv_cid; scope_it = scope_it->parent) {}
-
-    const var_ent* scope_var_entry_it = scope_it->vars;
-    const var_ent* const scope_var_entry_end = scope_it->vars + scope_it->vars_n;
-
-    for (; scope_var_entry_it != scope_var_entry_end; scope_var_entry_it++) {
-        if (scope_var_entry_it->id == uv_local_reg) {
-            scope_it->vbase[uv_local_reg] = v;
+    for (; callee_upvalue_it != callee_upvalue_end; callee_upvalue_it++) {
+        if (callee_upvalue_it->cid == uv_cid && callee_upvalue_it->id == uv_local_reg) {
+            *callee_upvalue_it->ref = v;
             return true;
         }
     }
 
     return false;
+}
+
+void context_close_upvalues(context* c, int32_t closure_id) {
+    closure* const callee = ent_pool_get_mut(&c->pool_c, ((const context_frame*) dynbuf_last(&c->frames))->closure_id).p;
+
+    if (callee->persist) {
+        return;
+    }
+
+    upvalue* callee_upvalue_it = callee->upvals;
+    upvalue* const callee_upvalue_end = callee->upvals + callee->upvals_cap;
+
+    for (; callee_upvalue_it != callee_upvalue_end; callee_upvalue_it++) {
+        callee_upvalue_it->v = *callee_upvalue_it->ref;
+        callee_upvalue_it->ref = &callee_upvalue_it->v;
+        callee_upvalue_it->closed = true;
+    }
+
+    callee->persist = true;
 }
