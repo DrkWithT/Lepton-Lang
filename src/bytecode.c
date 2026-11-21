@@ -131,6 +131,7 @@ void value_output(FILE* os, value v) {
         case nl_vtag_num: fprintf(os, "f32(%f)", v.f); break;
         case nl_vtag_str: fprintf(os, "str(id %d)", v.n); break;
         case nl_vtag_obj: fprintf(os, "obj(id %d)", v.n); break;
+        case nl_vtag_closure: fprintf(os, "clos(id %d)", v.n); break;
         default: fprintf(os, "unknown(...)"); break;
     }
 }

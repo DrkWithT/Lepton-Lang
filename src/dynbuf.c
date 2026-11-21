@@ -59,16 +59,16 @@ static void dynbuf_grow_to(dynbuf* self, size_t new_buffer_cap) {
 }
 
 void* dynbuf_push(dynbuf* self, const void* src) {
-    const auto next_len = self->n + 1;
+    const auto old_len = self->n;
 
-    if (next_len >= self->cap) {
+    if (old_len >= self->cap) {
         dynbuf_grow_to(self, (3 * self->cap) / 2);
     }
 
-    auto dest_ptr = self->data + self->n * self->item_size;
+    auto dest_ptr = self->data + old_len * self->item_size;
 
     memcpy(dest_ptr, src, self->item_size);
-    self->n = next_len;
+    self->n++;
 
     return dynbuf_last_mut(self);
 }

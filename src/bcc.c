@@ -1381,7 +1381,6 @@ bcc_state nl_bcc_state_new(int32_t max_strings, int32_t max_objects, int32_t max
     };
 
     bcc_start_scope(&temp_bccs, str_from_cstr("<global>"));
-    temp_bccs.curr_cid = bcc_start_chunk(&temp_bccs);
 
     return temp_bccs;
 }
@@ -1434,13 +1433,26 @@ bool nl_bcc_record_native_callable(bcc_state* bcc, const str* name, nl_native_t 
     bcc_emit_inst_binary(bcc, nl_op_call_n, next_native_id, arity);
     bcc_emit_inst_unary(bcc, nl_op_ld_accr, 0);
     bcc_emit_inst_unary(bcc, nl_op_ret, 0);
-    bcc->natives_n++;
 
     NL_ALLOC(metatable, temp_metatable, __FILE__, __LINE__);
     temp_metatable->ent_id = next_trampoline_chunk_id;
     temp_metatable->is_native_or_closure = true;
+    
+    closure new_closure = {
+        // ! IMPORTANT: native functions don't need capturing here because they can access all of the VM state via `context* c`. See `typedef nl_native_t`.
+        .upvals = nullptr,
+        .bc = dynbuf_get_mut(&bcc->chunks, next_trampoline_chunk_id),
+        .upvals_cap = 0,
+        .cid = next_trampoline_chunk_id,
+        .persist = false
+    };
 
-    return nl_bcc_record_global_object(bcc, name, temp_metatable).p != nullptr;
+    const auto closure_id = ent_pool_add(&bcc->pool_c, &new_closure).id;
+
+    return bcc_record_global(bcc, *name, (value) {
+        .n = closure_id,
+        .tag = nl_vtag_closure
+    })->tag != nl_bcc_sym_invalid;
 }
 
 [[nodiscard]]
@@ -1449,7 +1461,9 @@ program nl_bcc_compile_tu(bcc_state* bcc, const ast_unit* tu) {
     const auto ast_roots_n = tu->roots.n;
 
     bcc->source = &tu->source;
-    bcc->entry_cid = bcc->chunks.n;
+
+    const auto top_level_main_chunk_id = bcc_start_chunk(bcc);
+    bcc->curr_cid = top_level_main_chunk_id;
 
     bcc_result last_item_result = bcc_dud_result_v;
     const auto baseline_flags = bcc_flag_set_n(nl_bcc_cf_ok, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1);
@@ -1509,8 +1523,11 @@ program nl_bcc_compile_tu(bcc_state* bcc, const ast_unit* tu) {
         .pool_c = bcc->pool_c,
         .chunks = bcc->chunks,
         .gv = bcc->gvals,
+        .natives = bcc->natives,
         .gv_len = bcc->gvals_n,
         .gv_cap = bcc->gvals_cap,
-        .entry_cid = bcc->entry_cid
+        .natives_len = bcc->natives_n,
+        .natives_cap = bcc->natives_cap,
+        .entry_cid = top_level_main_chunk_id
     };
 }

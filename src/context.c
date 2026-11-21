@@ -164,7 +164,7 @@ bool context_try_invoke(context* c, value callee, uint8_t arity) {
         dynbuf_push(&c->frames, &target_frame);
     }
 
-    chunk* const target_chunk = target_closure->bc;
+    chunk* target_chunk = dynbuf_get_mut(&c->chunks, target_closure->cid);
 
     c->base_ip = target_chunk->bc;
     c->ip = target_chunk->bc;

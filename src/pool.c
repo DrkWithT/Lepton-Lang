@@ -48,13 +48,18 @@ ent_pool ent_pool_new(size_t object_size, int32_t capacity, nl_deleter_t df) {
         NL_PANIC("Invalid capacity passed to ent_pool_new() here: expected positive count!", __FILE__, __LINE__)
     }
 
+    // ! IMPORTANT: presize the reserved buffer for all objects that will be managed, avoiding a false nullptr upon indexing otherwise: this internal dynbuf would be incorrectly "empty".
     auto temp_mem = dynbuf_new(object_size, capacity, df);
+    dynbuf_lazy_pre_size(&temp_mem, capacity);
+
     auto temp_free_ids = dynbuf_new(sizeof(int32_t), capacity, nullptr);
+
 
     return (ent_pool) {
         .mem = temp_mem,
         .free_ids = temp_free_ids,
         .deleter = df,
+        .obj_size = object_size,
         .cost = 0,
         .gc_cost = ent_pool_calc_gc_cost(object_size, capacity, 2, 3),  // ! GC collect this pool if ~ 67% is full.
         .next_id = 0,

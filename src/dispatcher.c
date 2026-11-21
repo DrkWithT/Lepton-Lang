@@ -648,7 +648,7 @@ void op_call_n(context* c) {
     c->ip++;
 
     const auto n_fun = c->natives[decode_operand_at(c->ip)];
-    const uint8_t n_argc = decode_operand_at(c->ip + 2);
+    const uint8_t n_argc = decode_operand_at(c->ip + 2); // ! UH OH: decide if narrowing the u16 to a u8 is ok for now... this may cause bugs later!
 
     if (!n_fun(c, n_argc)) {
         c->flags = nl_ctxf_err_op;
@@ -676,6 +676,14 @@ void op_ret(context* c) {
     c->stack_bp = callee_frame->caller_stack_base;
 
     dynbuf_pop(&c->frames);
+
+    if (dynbuf_size(&c->frames) == 0) {
+        if (c->flags & nl_ctxf_pending) {
+            c->flags = nl_ctxf_ok;
+        }
+
+        return;
+    }
 
     TAILCALL
     return dispatch_op(c);

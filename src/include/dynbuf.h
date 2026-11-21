@@ -18,6 +18,10 @@ dynbuf dynbuf_new(size_t item_size, uint32_t init_cap, nl_deleter_t deleter);
 
 void dynbuf_del(dynbuf* self);
 
+NL_CXX_INLINE void dynbuf_lazy_pre_size(dynbuf* self, uint32_t n) {
+    self->n = (n > self->cap) ? self->cap : n;
+}
+
 [[nodiscard]]
 NL_CXX_INLINE const void* dynbuf_data(const dynbuf* self) {
     return self->data;
