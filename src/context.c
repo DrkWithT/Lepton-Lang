@@ -28,9 +28,10 @@ context context_new(program pg) {
             .caller_base_ip = nullptr,
             .caller_ip = nullptr,
             .caller_kp = nullptr,
+            .caller_icaches = nullptr,
             .caller_stack_base = vm_stack_buf,
             .closure_id = -1,
-            .cid = -1
+            .cid = pg.entry_cid
         };
 
         dynbuf_push(&frame_stack, &top_frame);
@@ -148,14 +149,16 @@ bool context_try_invoke(context* c, value callee, uint8_t arity) {
         return false;
     }
 
-    const chunk* const caller_chunk = c->chunks.data + ((const context_frame*) dynbuf_last(&c->frames))->cid;
+    const chunk* const caller_chunk = dynbuf_get(&c->chunks, ((const context_frame*) dynbuf_last(&c->frames))->cid);
     closure* target_closure = ent_pool_get_mut_unchecked(&c->pool_c, callee.n).p;
 
     {
         context_frame target_frame = {
             .caller_base_ip = c->base_ip,
-            .caller_ip = c->ip + 1,
+            // ! IMPORTANT: skip next 2 u16 operands of current call-opcode in the caller to avoid misinterpretation
+            .caller_ip = c->ip + 4,
             .caller_kp = c->kp,
+            .caller_icaches = c->icp,
             .caller_stack_base = c->stack_bp,
             .closure_id = callee.n,
             .cid = target_closure->cid
@@ -210,6 +213,10 @@ float context_convert_to_f32(const context* c, value v) {
 [[nodiscard]]
 bool context_test_equality(const context* c, value lhs, value rhs) {
     if (lhs.tag != rhs.tag) {
+        if ((lhs.tag == nl_vtag_int && rhs.tag == nl_vtag_num) || (lhs.tag == nl_vtag_num && rhs.tag == nl_vtag_int)) {
+            return context_convert_to_f32(c, lhs) == context_convert_to_f32(c, rhs);
+        }
+
         return false;
     }
 
@@ -258,7 +265,7 @@ bool context_set_upvalue(context* c, uint16_t uv_cid, uint16_t uv_local_reg, val
 void context_close_upvalues(context* c, int32_t closure_id) {
     closure* const callee = ent_pool_get_mut(&c->pool_c, ((const context_frame*) dynbuf_last(&c->frames))->closure_id).p;
 
-    if (callee->persist) {
+    if (!callee->upvals || callee->persist) {
         return;
     }
 

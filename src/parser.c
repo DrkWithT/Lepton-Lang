@@ -208,6 +208,8 @@ ast_node* nl_parse_expr_func(parser* p, const str* source) {
             dynbuf_del(&param_tokens);
             return nullptr;
         }
+
+        dynbuf_push(&param_tokens, &p->prev);
     }
 
     // ! ("," <identifier>)*
@@ -223,8 +225,7 @@ ast_node* nl_parse_expr_func(parser* p, const str* source) {
             return nullptr;
         }
 
-        const auto checked_name_tk = p->prev;
-        dynbuf_push(&param_tokens, &checked_name_tk);
+        dynbuf_push(&param_tokens, &p->prev);
     }
 
     if (!parser_consume_of(p, source, (tk_tag[]) {nl_tk_rparen}, 1)) {

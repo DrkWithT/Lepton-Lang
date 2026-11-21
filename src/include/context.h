@@ -16,6 +16,7 @@ typedef struct nl_context_frame_t {
     const uint8_t* caller_base_ip;
     const uint8_t* caller_ip;
     const value* caller_kp;
+    ic* caller_icaches;
     value* caller_stack_base;
     int32_t closure_id;
     uint16_t cid;
