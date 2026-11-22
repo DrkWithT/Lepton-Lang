@@ -452,7 +452,7 @@ void op_lt(context* c) {
     const auto a2_reg = decode_operand_at(c->ip + 4);
 
     c->stack_bp[dest_reg] = (value) {
-        .f = context_convert_to_f32(c, c->stack_bp[a1_reg])
+        .b = context_convert_to_f32(c, c->stack_bp[a1_reg])
             < context_convert_to_f32(c, c->stack_bp[a2_reg]),
         .tag = nl_vtag_num
     };
@@ -470,7 +470,7 @@ void op_lte(context* c) {
     const auto a2_reg = decode_operand_at(c->ip + 4);
 
     c->stack_bp[dest_reg] = (value) {
-        .f = context_convert_to_f32(c, c->stack_bp[a1_reg])
+        .b = context_convert_to_f32(c, c->stack_bp[a1_reg])
             <= context_convert_to_f32(c, c->stack_bp[a2_reg]),
         .tag = nl_vtag_num
     };
@@ -488,7 +488,7 @@ void op_gt(context* c) {
     const auto a2_reg = decode_operand_at(c->ip + 4);
 
     c->stack_bp[dest_reg] = (value) {
-        .f = context_convert_to_f32(c, c->stack_bp[a1_reg])
+        .b = context_convert_to_f32(c, c->stack_bp[a1_reg])
             > context_convert_to_f32(c, c->stack_bp[a2_reg]),
         .tag = nl_vtag_num
     };
@@ -506,7 +506,7 @@ void op_gte(context* c) {
     const auto a2_reg = decode_operand_at(c->ip + 4);
 
     c->stack_bp[dest_reg] = (value) {
-        .f = context_convert_to_f32(c, c->stack_bp[a1_reg])
+        .b = context_convert_to_f32(c, c->stack_bp[a1_reg])
             >= context_convert_to_f32(c, c->stack_bp[a2_reg]),
         .tag = nl_vtag_num
     };
@@ -672,7 +672,7 @@ void op_ret(context* c) {
     c->base_ip = callee_frame->caller_base_ip;
     c->ip = callee_frame->caller_ip;
     c->kp = callee_frame->caller_kp;
-    c->icp = ((chunk*) (c->chunks.data + callee_frame->cid))->icv;
+    c->icp = ((chunk*) (c->chunks.data + callee_frame->cid * sizeof(chunk)))->icv;
     c->stack_bp = callee_frame->caller_stack_base;
 
     dynbuf_pop(&c->frames);

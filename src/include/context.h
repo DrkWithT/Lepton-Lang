@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bytecode.h"
+#include "closures.h"
 
 
 

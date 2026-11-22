@@ -48,12 +48,20 @@ static const char* const bc_opcode_names_v[] = {
 void chunk_del(void *c) {
     auto chunk_self = (chunk*)c;
 
-    free(chunk_self->icv);
-    chunk_self->icv = nullptr;
-    free(chunk_self->kd);
-    chunk_self->kd = nullptr;
-    free(chunk_self->bc);
-    chunk_self->bc = nullptr;
+    if (chunk_self->icv != nullptr) {
+        free(chunk_self->icv);
+        chunk_self->icv = nullptr;
+    }
+
+    if (chunk_self->kd != nullptr) {
+        free(chunk_self->kd);
+        chunk_self->kd = nullptr;
+    }
+
+    if (chunk_self->bc != nullptr) {
+        free(chunk_self->bc);
+        chunk_self->bc = nullptr;
+    }
 }
 
 [[nodiscard]]
@@ -163,6 +171,8 @@ void chunk_output(FILE* os, const chunk* c) {
     const uint8_t* chunk_bc = c->bc;
     const auto chunk_bc_len = c->code_len;
 
+    fprintf(os, "\n---- STATS ----\n\nregister-window: %u\n", c->regs_n);
+
     fprintf(os, "\n---- CONSTANTS ----\n");
 
     for (uint16_t k_id = 0; k_id < chunk_consts_len; k_id++) {
@@ -187,7 +197,7 @@ void chunk_output(FILE* os, const chunk* c) {
             case nl_op_mov_rg: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
             case nl_op_sto_arg: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
             case nl_op_ld_arg: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_ld_upval: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
+            case nl_op_ld_upval: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
             case nl_op_sto_upval: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
             case nl_op_close_upvals: inst_output(os, chunk_bc + bc_byte_pos, 0); bc_byte_pos++; break;
             case nl_op_ld_accr: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;

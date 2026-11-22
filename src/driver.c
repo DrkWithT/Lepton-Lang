@@ -152,12 +152,13 @@ int nl_driver_run(driver* d, const char* argv[], int arg_count) {
         return 1;
     }
 
+    // ! FIXME: chunk 0's bc pointer is invalidated somehow to nullptr.
     auto bc_program = nl_bcc_compile_tu(&d->compiler, &ast);
 
     if (!bc_program.gv) {
         puts("\x1b[1;31mERROR:\x1b[0m Failed to successfully compile script.");
 
-        program_del(&bc_program);
+        // program_del(&bc_program);
         ast_unit_del(&ast);
         string_del(&file_source);
 

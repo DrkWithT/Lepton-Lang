@@ -280,7 +280,7 @@ void nl_bcc_place_ic(bcc_state* bcc, uint16_t ip, ic temp_ic) {
 void bcc_patch_upvals_n(bcc_state* bcc) {
     const symscope* curr_scope = dynbuf_last(&bcc->scopes);
     const syminfo* const curr_infos = curr_scope->infos.data;
-    chunk* curr_chunk = bcc->chunks.data + bcc->curr_cid;
+    chunk* curr_chunk = dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
     const uint16_t curr_infos_n = curr_scope->infos.n;
 
     uint32_t* upval_metadata = calloc(4, sizeof(uint32_t));
@@ -309,6 +309,7 @@ void bcc_patch_upvals_n(bcc_state* bcc) {
         }
     }
 
+    curr_chunk->upval_entries = upval_metadata;
     curr_chunk->upvals_n = upval_count;
 }
 
@@ -340,14 +341,7 @@ NL_CXX_INLINE void bcc_update_curr_rc(bcc_state* bcc, uint16_t next_rc) {
 int32_t bcc_normalize_to_local_reg(bcc_state* bcc, bcc_result r) {
     const auto r_tag = r.domain; // todo: add u16-max check for reserved `top_reg`!
 
-    if (r_tag == nl_bcc_sym_acc_r) {
-        const auto temp_local_r = bcc->top_reg++;
-
-        bcc_update_curr_rc(bcc, bcc->top_reg);
-        bcc_emit_inst_unary(bcc, nl_op_ld_accr, temp_local_r);
-
-        return temp_local_r;
-    } else if (r_tag == nl_bcc_sym_local_r) {
+    if (r_tag == nl_bcc_sym_local_r) {
         return r.n;
     } else if (r_tag == nl_bcc_sym_foreign_local) {
         const auto temp_local_r = bcc->top_reg++;
@@ -512,6 +506,20 @@ const syminfo* bcc_record_local(bcc_state* bcc, str name) {
     }, 'L');
 }
 
+void bcc_record_upval_info(bcc_state* bcc, const syminfo* uv_info) {
+    auto curr_scope = (symscope*) dynbuf_last_mut(&bcc->scopes);
+    const syminfo* info_it = curr_scope->infos.data;
+    const syminfo* const info_end = info_it + curr_scope->infos.n;
+
+    for (; info_it != info_end; info_it++) {
+        if (info_it->tag == nl_bcc_sym_foreign_local && info_it->cid == uv_info->cid && info_it->n == uv_info->n) {
+            return;
+        }
+    }
+
+    return (void) bcc_push_symbol_to(bcc, *uv_info, 'L');
+}
+
 // ! IMPORTANT: upvalues are pre-recorded per chunk in vinfos as a var_ent for upvalue having `cid = assoc-scope -> assoc-function -> func-chunk-ID` and local-reg "offset"
 // void bcc_save_chunk_var_ent(bcc_state* bcc, var_ent entry) {
 //     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
@@ -566,14 +574,21 @@ bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_
     } else if ((found_named_info = bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'B')) != nullptr) {
         if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
             bcc_emit_inst_ternary(bcc, nl_op_ld_upval, bcc->top_reg, found_named_info->n, found_named_info->cid);
-            // bcc_save_chunk_var_ent(bcc, (var_ent) {
-            //     .id = found_named_info->n,
-            //     .cid = found_named_info->cid
-            // });
 
             actual_info.n = bcc->top_reg++;
             actual_info.cid = bcc->curr_cid;
             actual_info.tag = nl_bcc_sym_local_r;
+
+            if (found_named_info->cid != bcc->curr_cid) {
+                const syminfo temp_upval_info = {
+                    .name = found_named_info->name,
+                    .n = found_named_info->n,
+                    .cid = found_named_info->cid,
+                    .tag = nl_bcc_sym_foreign_local
+                };
+
+                bcc_record_upval_info(bcc, &temp_upval_info);
+            }
         } else if (found_named_info->cid == bcc->curr_cid) {
             actual_info.n = bcc->top_reg++;
             actual_info.cid = bcc->curr_cid;
@@ -582,6 +597,8 @@ bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_
             actual_info.n = found_named_info->n;
             actual_info.cid = found_named_info->cid;
             actual_info.tag = nl_bcc_sym_foreign_local;
+
+            bcc_record_upval_info(bcc, &actual_info);
         }
     }
 
@@ -753,7 +770,6 @@ bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t fla
 
     if (!bcc_flag_check_n(checked_body_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
         string_del(&internal_lambda_name);
-        chunk_del((chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid));
         bcc_end_scope(bcc);
         bcc->curr_cid = prev_cid;
         bcc->top_reg = internal_lambda_reg;
@@ -807,7 +823,7 @@ bcc_result bcc_emit_expr_call(bcc_state* bcc, const ast_node* node, uint16_t fla
     // ? note: at runtime, each frame tracks the scope (var locator infos), caller & callee base_reg, and corresponding chunk-ID of a callee!
     // ? 1. emit evaluation of callee value... emit based on if a foreign / local reg is yielded -> local_reg...
     // ? 2. track N args & each one should be stored with `sto_arg arg-reg-id, arg-temp-reg`...
-    // ? 3. call places its result into an `acc` reg for its result during runtime: it then replaces the reused callee-reg with `acc`... just return a compile-time `bcc_result` with `.tag = nl_bcc_sym_acc_r` to tell other expression emitters where the bytecode gets the result...
+    // ? 3. call places its result into an `acc` reg for its result during runtime: it then replaces the reused callee-reg with `acc`.
 
     const auto callee_emit_result = bcc_emit_next(bcc, call_callee, not_lhs_hints);
     if (!bcc_flag_check_n(callee_emit_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
@@ -833,21 +849,34 @@ bcc_result bcc_emit_expr_call(bcc_state* bcc, const ast_node* node, uint16_t fla
         return bcc_dud_result_v;
     }
 
+    uint16_t accr_spill_reg;
+
     if (callee_emit_result.domain == nl_bcc_sym_local_r) {
         bcc_emit_inst_binary(bcc, nl_op_call, callee_emit_result.n, call_argc);
-        bcc_update_curr_rc(bcc, bcc->top_reg);
+        bcc_emit_inst_unary(bcc, nl_op_ld_accr, bcc->top_reg);
+
+        accr_spill_reg = bcc->top_reg;
+
+        bcc_update_curr_rc(bcc, bcc->top_reg++);
     } else if (callee_emit_result.domain == nl_bcc_sym_foreign_local) {
         bcc_emit_inst_ternary(bcc, nl_op_ld_upval, bcc->top_reg, callee_emit_result.n, callee_emit_result.cid);
         bcc_emit_inst_binary(bcc, nl_op_call, bcc->top_reg++, call_argc);
+
+        accr_spill_reg = bcc->top_reg;
+
+        bcc_emit_inst_unary(bcc, nl_op_ld_accr, accr_spill_reg);
         bcc_update_curr_rc(bcc, bcc->top_reg);
+    } else {
+        bcc_report_err(bcc, "Unresolvable location found for call result around here. This may be a bug.", bcc->line, bcc->col);
+
+        return bcc_dud_result_v;
     }
 
-
     return (bcc_result) {
-        .n = 0,
-        .cid = 0,
+        .n = accr_spill_reg,
+        .cid = bcc->curr_cid,
         .flags = flags,
-        .domain = nl_bcc_sym_acc_r
+        .domain = nl_bcc_sym_local_r
     };
 }
 
@@ -1093,16 +1122,15 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
             }
 
             const auto entry_resultant_value_reg = bcc_normalize_to_local_reg(bcc, entry_resultant_result);
+            
+            bcc_emit_inst_binary(bcc, nl_op_mov_rr, cond_result_value_reg, entry_resultant_value_reg);
+            bcc_update_curr_rc(bcc, bcc->top_reg);
+
             const auto next_exit_jump_ip = bcc_emit_inst_unary(bcc, nl_op_jmp, 0);
             const auto next_entry_ip = bcc_next_ip(bcc);
 
             bcc_patch_cond_jump(bcc, entry_checked_jump_ip, next_entry_ip);
             dynbuf_push(&cond_ending_ips, &next_exit_jump_ip);
-
-            if (cond_is_expr) {
-                bcc_emit_inst_binary(bcc, nl_op_mov_rr, cond_result_value_reg, entry_resultant_value_reg);
-                bcc_update_curr_rc(bcc, bcc->top_reg);
-            }
         } else {
             const auto last_entry_resultant_result = bcc_emit_next(bcc, cond_case_resultant, cond_item_flags);
 
@@ -1114,10 +1142,8 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
 
             const auto last_entry_result_value_reg = bcc_normalize_to_local_reg(bcc, last_entry_resultant_result);
 
-            if (cond_is_expr) {
-                bcc_emit_inst_binary(bcc, nl_op_mov_rr, cond_result_value_reg, last_entry_result_value_reg);
-                bcc_update_curr_rc(bcc, bcc->top_reg);
-            }
+            bcc_emit_inst_binary(bcc, nl_op_mov_rr, cond_result_value_reg, last_entry_result_value_reg);
+            bcc_update_curr_rc(bcc, bcc->top_reg);
         }
     }
 
@@ -1433,10 +1459,6 @@ bool nl_bcc_record_native_callable(bcc_state* bcc, const str* name, nl_native_t 
     bcc_emit_inst_binary(bcc, nl_op_call_n, next_native_id, arity);
     bcc_emit_inst_unary(bcc, nl_op_ld_accr, 0);
     bcc_emit_inst_unary(bcc, nl_op_ret, 0);
-
-    NL_ALLOC(metatable, temp_metatable, __FILE__, __LINE__);
-    temp_metatable->ent_id = next_trampoline_chunk_id;
-    temp_metatable->is_native_or_closure = true;
     
     closure new_closure = {
         // ! IMPORTANT: native functions don't need capturing here because they can access all of the VM state via `context* c`. See `typedef nl_native_t`.

@@ -102,7 +102,7 @@ upvalue context_mk_upvalue_from(context* c, uint16_t uv_cid, uint16_t uv_reg_slo
     }
 
     return (upvalue) {
-        .ref = frame_it->caller_stack_base,
+        .ref = frame_it->caller_stack_base + uv_reg_slot,
         .v = { .b = 0, .tag = nl_vtag_nil },
         .cid = frame_it->cid,
         .id = uv_reg_slot,
@@ -112,13 +112,13 @@ upvalue context_mk_upvalue_from(context* c, uint16_t uv_cid, uint16_t uv_reg_slo
 
 [[nodiscard]]
 value context_try_closurify(context* c, uint16_t chunk_id) {
-    chunk* closure_chunk = c->chunks.data + chunk_id;
+    chunk* closure_chunk = c->chunks.data + chunk_id * sizeof(chunk);
     const uint32_t* upvalue_metadata = closure_chunk->upval_entries;
     const auto upvalue_count = closure_chunk->upvals_n;
     NL_ALLOC_N(upvalue_count, upvalue, upval_buf, __FILE__, __LINE__)
 
     for (uint16_t upval_slot = 0; upval_slot < upvalue_count; upval_slot++) {
-        const uint16_t upvalue_cid = upvalue_metadata[upval_slot] & 0xffff;
+        const uint16_t upvalue_cid = upvalue_metadata[upval_slot] & 0x0000ffff;
         const uint16_t upvalue_slot = (upvalue_metadata[upval_slot] & 0xffff0000) >> 16;
 
         upval_buf[upval_slot] = context_mk_upvalue_from(c, upvalue_cid, upval_slot);
@@ -263,9 +263,9 @@ bool context_set_upvalue(context* c, uint16_t uv_cid, uint16_t uv_local_reg, val
 }
 
 void context_close_upvalues(context* c, int32_t closure_id) {
-    closure* const callee = ent_pool_get_mut(&c->pool_c, ((const context_frame*) dynbuf_last(&c->frames))->closure_id).p;
+    closure* const callee = ent_pool_get_mut_unchecked(&c->pool_c, closure_id).p;
 
-    if (!callee->upvals || callee->persist) {
+    if (callee->persist || !callee->upvals) {
         return;
     }
 
