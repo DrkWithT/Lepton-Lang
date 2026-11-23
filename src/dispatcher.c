@@ -672,7 +672,7 @@ void op_ret(context* c) {
     c->base_ip = callee_frame->caller_base_ip;
     c->ip = callee_frame->caller_ip;
     c->kp = callee_frame->caller_kp;
-    c->icp = ((chunk*) (c->chunks.data + callee_frame->cid * sizeof(chunk)))->icv;
+    c->icp = callee_frame->caller_icaches;
     c->stack_bp = callee_frame->caller_stack_base;
 
     dynbuf_pop(&c->frames);

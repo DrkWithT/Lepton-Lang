@@ -77,3 +77,13 @@ NL_CXX_INLINE void* dynbuf_get_mut(dynbuf* self, uint32_t pos) {
 
     return self->data + pos * self->item_size;
 }
+
+[[nodiscard]]
+NL_CXX_INLINE const void* dynbuf_get_unchecked(const dynbuf* self, uint32_t pos) {
+    return self->data + pos * self->item_size;
+}
+
+[[nodiscard]]
+NL_CXX_INLINE void* dynbuf_get_mut_unchecked(dynbuf* self, uint32_t pos) {
+    return self->data + pos * self->item_size;
+}

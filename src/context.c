@@ -112,7 +112,7 @@ upvalue context_mk_upvalue_from(context* c, uint16_t uv_cid, uint16_t uv_reg_slo
 
 [[nodiscard]]
 value context_try_closurify(context* c, uint16_t chunk_id) {
-    chunk* closure_chunk = c->chunks.data + chunk_id * sizeof(chunk);
+    chunk* closure_chunk = dynbuf_get_mut_unchecked(&c->chunks, chunk_id);
     const uint32_t* upvalue_metadata = closure_chunk->upval_entries;
     const auto upvalue_count = closure_chunk->upvals_n;
     NL_ALLOC_N(upvalue_count, upvalue, upval_buf, __FILE__, __LINE__)
@@ -167,7 +167,7 @@ bool context_try_invoke(context* c, value callee, uint8_t arity) {
         dynbuf_push(&c->frames, &target_frame);
     }
 
-    chunk* target_chunk = dynbuf_get_mut(&c->chunks, target_closure->cid);
+    chunk* target_chunk = dynbuf_get_mut_unchecked(&c->chunks, target_closure->cid);
 
     c->base_ip = target_chunk->bc;
     c->ip = target_chunk->bc;
