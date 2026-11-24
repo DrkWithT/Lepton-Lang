@@ -146,7 +146,6 @@ typedef struct nl_ast_loop_t {
     ast_node* check_expr;
     ast_node* update_expr;
     ast_node* body;
-    ast_node* result_expr;
 } loop;
 
 typedef struct nl_loop_abator_t {

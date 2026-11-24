@@ -1102,7 +1102,7 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
     const auto cond_is_expr = cond_node->is_expr;
 
     auto cond_ending_ips = dynbuf_new(sizeof(uint16_t), 4, nullptr);
-    const auto cond_result_value_reg = bcc->top_reg;
+    const auto cond_result_value_reg = ++bcc->top_reg;
 
     for (uint16_t cond_entry_i = 0; cond_entry_i < cond_entries_n; cond_entry_i++) {
         const ast_node* const cond_entry_check = cond_entries[cond_entry_i].check;
@@ -1168,6 +1168,7 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
     }
 
     dynbuf_del(&cond_ending_ips);
+    bcc->top_reg = cond_result_value_reg + 1;
 
     if (cond_is_expr) {
         return (bcc_result) {
@@ -1193,10 +1194,9 @@ bcc_result bcc_emit_loop(bcc_state* bcc, const ast_node* node, uint16_t flags) {
     const ast_node* const loop_check = loop_node->check_expr;
     const ast_node* const loop_update = loop_node->update_expr;
     const ast_node* const loop_body = loop_node->body;
-    const ast_node* const loop_result = loop_node->result_expr;
 
     const auto loop_expr_flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
-    const auto loop_temp_reg = bcc->top_reg;
+    const auto loop_temp_reg = ++bcc->top_reg;
 
     const auto loop_initial_result = bcc_emit_next(bcc, loop_initial, loop_expr_flags);
     if (!bcc_flag_check_n(loop_initial_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
@@ -1252,15 +1252,7 @@ bcc_result bcc_emit_loop(bcc_state* bcc, const ast_node* node, uint16_t flags) {
     }
 
     bcc_end_loop(bcc);
-
-    const auto loop_result_expr_result = bcc_emit_next(bcc, loop_result, loop_expr_flags);
-    if (!bcc_flag_check_n(loop_result_expr_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
-        return loop_result_expr_result;
-    }
-
-    const auto loop_result_temp_reg = bcc_normalize_to_local_reg(bcc, loop_result_expr_result);
-
-    bcc_emit_inst_binary(bcc, nl_op_mov_rr, loop_temp_reg, loop_result_temp_reg);
+    bcc->top_reg = loop_temp_reg + 1;
     bcc_update_curr_rc(bcc, bcc->top_reg);
 
     return (bcc_result) {

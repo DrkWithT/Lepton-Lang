@@ -156,7 +156,6 @@ void nl_ast_loop_del(void* self) {
     ast_node_del(loop_self->check_expr);
     ast_node_del(loop_self->update_expr);
     ast_node_del(loop_self->body);
-    ast_node_del(loop_self->result_expr);
 }
 
 void nl_ast_loop_abator_del(void* self) {

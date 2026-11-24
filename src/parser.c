@@ -769,7 +769,7 @@ ast_node* nl_parse_cond(parser* p, const str* source, bool is_expr) {
 }
 
 // ! Syntax:
-// ! `<loop> ::= "loop" "(" <init> ";" <check> ";" <update> ")" <block> ("->" <or>)?is_expr`
+// ! `<loop> ::= "loop" "(" <init> ";" <check> ";" <update> ")" <block>`
 [[nodiscard]]
 ast_node* nl_parse_loop(parser* p, const str* source, bool is_expr) {
     parser_consume(p, source); // ? eat prechecked 'loop'
@@ -829,38 +829,12 @@ ast_node* nl_parse_loop(parser* p, const str* source, bool is_expr) {
         return nullptr;
     }
 
-    ast_node* result_ptr = nullptr;
-
-    if (is_expr) {
-        if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_arrow }, 1)) {
-
-            parser_report_mini_error(p, p->curr.line, p->curr.col, "Expected '->' before loop expression's result.");
-            
-            ast_node_del(initial_expr_ptr);
-            ast_node_del(check_expr_ptr);
-            ast_node_del(update_expr_ptr);
-            ast_node_del(loop_body_ptr);
-            return nullptr;
-        }
-
-        result_ptr = nl_parse_next(p, source, true);
-
-        if (!result_ptr) {
-            ast_node_del(initial_expr_ptr);
-            ast_node_del(check_expr_ptr);
-            ast_node_del(update_expr_ptr);
-            ast_node_del(loop_body_ptr);
-            return nullptr;
-        }
-    }
-
     return nl_make_ast_ptr((ast_node) {
         .data.lp = {
             .init_expr = initial_expr_ptr,
             .check_expr = check_expr_ptr,
             .update_expr = update_expr_ptr,
-            .body = loop_body_ptr,
-            .result_expr = result_ptr
+            .body = loop_body_ptr
         },
         .tag = nl_ast_loop
     });
