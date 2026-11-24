@@ -9,7 +9,7 @@ test1 = cond {
     else: 0
 };
 
-assert(test1 == -1);
+assert(test1 == -1, "Expected -1");
 
 cond {
     a < 0: {
@@ -23,4 +23,4 @@ cond {
     } 
 }
 
-assert(test2 == 1);
+assert(test2 == 1, "Expected 1");
