@@ -43,6 +43,7 @@ typedef struct nl_bcc_result_t {
 typedef struct nl_bcc_loopinfo_t {
     dynbuf rep_iposv;   // continue jump locations
     dynbuf exit_iposv;  // break jump locations
+    uint16_t acc_reg;   // loop result register for yielded values
 } bcc_loopinfo;
 
 typedef struct nl_bcc_symscope_t {

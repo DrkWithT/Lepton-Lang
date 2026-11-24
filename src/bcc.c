@@ -329,6 +329,20 @@ void bcc_end_scope(bcc_state* bcc) {
     dynbuf_pop(&bcc->scopes);
 }
 
+void bcc_start_loop(bcc_state* bcc, uint16_t loop_acc_reg) {
+    bcc_loopinfo next_loop = {
+        .rep_iposv = dynbuf_new(sizeof(uint16_t), 4, nullptr),
+        .exit_iposv = dynbuf_new(sizeof(uint16_t), 4, nullptr),
+        .acc_reg = loop_acc_reg
+    };
+
+    dynbuf_push(&bcc->loops, &next_loop);
+}
+
+void bcc_end_loop(bcc_state* bcc) {
+    dynbuf_pop(&bcc->loops);
+}
+
 NL_CXX_INLINE void bcc_update_curr_rc(bcc_state* bcc, uint16_t next_rc) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
 
@@ -1001,7 +1015,7 @@ bcc_result bcc_emit_binary_logical(bcc_state* bcc, const ast_node* node, uint16_
     }
 
     const auto resolved_lhs_reg = bcc_normalize_to_local_reg(bcc, lhs_result);
-    const auto jumper_ip = bcc_emit_inst_binary(bcc, binary_logical_runtime_op, resolved_lhs_reg, -1);
+    const auto jumper_ipos = bcc_emit_inst_binary(bcc, binary_logical_runtime_op, resolved_lhs_reg, -1);
 
     const auto rhs_result = bcc_emit_next(bcc, binary_rhs, operand_flags);
 
@@ -1010,9 +1024,9 @@ bcc_result bcc_emit_binary_logical(bcc_state* bcc, const ast_node* node, uint16_
     }
 
     const auto resolved_rhs_reg = bcc_normalize_to_local_reg(bcc, rhs_result);
-    const auto end_binary_logical_ip = bcc_emit_inst_binary(bcc, nl_op_mov_rr, resolved_lhs_reg, resolved_rhs_reg) + 1;
+    const auto end_binary_logical_ipos = bcc_emit_inst_binary(bcc, nl_op_mov_rr, resolved_lhs_reg, resolved_rhs_reg) + 1;
 
-    bcc_patch_cond_jump(bcc, jumper_ip, end_binary_logical_ip);
+    bcc_patch_cond_jump(bcc, jumper_ipos, end_binary_logical_ipos);
 
     bcc_update_curr_rc(bcc, bcc->top_reg);
     bcc->top_reg = resolved_lhs_reg + 1;
@@ -1112,7 +1126,7 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
             }
 
             const auto entry_check_temp_reg = bcc_normalize_to_local_reg(bcc, entry_check_result);
-            const auto entry_checked_jump_ip = bcc_emit_inst_binary(bcc, nl_op_jmp_else, entry_check_temp_reg, 0);
+            const auto entry_checked_jump_ipos = bcc_emit_inst_binary(bcc, nl_op_jmp_else, entry_check_temp_reg, 0);
             const auto entry_resultant_result = bcc_emit_next(bcc, cond_case_resultant, cond_item_flags);
 
             if (!bcc_flag_check_n(entry_resultant_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
@@ -1126,11 +1140,11 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
             bcc_emit_inst_binary(bcc, nl_op_mov_rr, cond_result_value_reg, entry_resultant_value_reg);
             bcc_update_curr_rc(bcc, bcc->top_reg);
 
-            const auto next_exit_jump_ip = bcc_emit_inst_unary(bcc, nl_op_jmp, 0);
-            const auto next_entry_ip = bcc_next_ip(bcc);
+            const auto next_exit_jump_ipos = bcc_emit_inst_unary(bcc, nl_op_jmp, 0);
+            const auto next_entry_ipos = bcc_next_ip(bcc);
 
-            bcc_patch_cond_jump(bcc, entry_checked_jump_ip, next_entry_ip);
-            dynbuf_push(&cond_ending_ips, &next_exit_jump_ip);
+            bcc_patch_cond_jump(bcc, entry_checked_jump_ipos, next_entry_ipos);
+            dynbuf_push(&cond_ending_ips, &next_exit_jump_ipos);
         } else {
             const auto last_entry_resultant_result = bcc_emit_next(bcc, cond_case_resultant, cond_item_flags);
 
@@ -1147,10 +1161,10 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
         }
     }
 
-    const auto end_cond_ip = bcc_emit_inst_nonary(bcc, nl_op_nop);
+    const auto end_cond_ipos = bcc_emit_inst_nonary(bcc, nl_op_nop);
 
     for (uint16_t jump_ipos_index = 0; jump_ipos_index < cond_ending_ips.n; jump_ipos_index++) {
-        bcc_patch_jump(bcc, *((const uint16_t*) dynbuf_get(&cond_ending_ips, jump_ipos_index)), end_cond_ip);
+        bcc_patch_jump(bcc, *((const uint16_t*) dynbuf_get(&cond_ending_ips, jump_ipos_index)), end_cond_ipos);
     }
 
     dynbuf_del(&cond_ending_ips);
@@ -1174,16 +1188,130 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
 
 [[nodiscard]]
 bcc_result bcc_emit_loop(bcc_state* bcc, const ast_node* node, uint16_t flags) {
-    bcc_report_err(bcc, "Unsupported syntax found in loop around here during bytecode compilation.", bcc->line, bcc->col);
+    const auto loop_node = &node->data.lp;
+    const ast_node* const loop_initial = loop_node->init_expr;
+    const ast_node* const loop_check = loop_node->check_expr;
+    const ast_node* const loop_update = loop_node->update_expr;
+    const ast_node* const loop_body = loop_node->body;
+    const ast_node* const loop_result = loop_node->result_expr;
 
-    return bcc_dud_result_v; // todo: implement later
+    const auto loop_expr_flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
+    const auto loop_temp_reg = bcc->top_reg;
+
+    const auto loop_initial_result = bcc_emit_next(bcc, loop_initial, loop_expr_flags);
+    if (!bcc_flag_check_n(loop_initial_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return loop_initial_result;
+    }
+
+    const auto loop_initializer_reg = bcc_normalize_to_local_reg(bcc, loop_initial_result);
+    bcc_emit_inst_binary(bcc, nl_op_mov_rr, loop_temp_reg, loop_initializer_reg);
+
+    bcc_start_loop(bcc, loop_temp_reg);
+
+    const auto loop_begin_ipos = bcc_next_ip(bcc);
+
+    const auto loop_check_result = bcc_emit_next(bcc, loop_check, loop_expr_flags);
+    if (!bcc_flag_check_n(loop_check_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return loop_check_result;
+    }
+
+    const auto loop_check_reg = bcc_normalize_to_local_reg(bcc, loop_check_result);
+    const auto loop_exit_ip = bcc_emit_inst_binary(bcc, nl_op_jmp_else, loop_check_reg, 0);
+
+    const auto loop_body_result = bcc_emit_next(bcc, loop_body, loop_expr_flags);
+    if (!bcc_flag_check_n(loop_body_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return loop_body_result;
+    }
+
+    const auto loop_updated_ip = bcc_next_ip(bcc);
+    const auto loop_update_result = bcc_emit_next(bcc, loop_update, loop_expr_flags);
+    if (!bcc_flag_check_n(loop_update_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return loop_update_result;
+    }
+
+    const uint16_t loop_repeater_ip = bcc_emit_inst_unary(bcc, nl_op_jmp, loop_begin_ipos), loop_ender_ipos = loop_repeater_ip + 3;
+
+    bcc_patch_cond_jump(bcc, loop_exit_ip, loop_ender_ipos);
+
+    // ! IMPORTANT: Patch any break or continue jumps for this loop nesting level to ensure that 
+    {
+        const bcc_loopinfo* const curr_loopinfo = dynbuf_last(&bcc->loops);
+        const dynbuf* const breaks = &curr_loopinfo->exit_iposv, * const continues = &curr_loopinfo->rep_iposv;
+
+        for (uint32_t brk_id = 0; brk_id < breaks->n; brk_id++) {
+            const uint16_t break_ipos = *((const uint16_t*) dynbuf_get_unchecked(breaks, brk_id));
+
+            bcc_patch_jump(bcc, break_ipos, loop_ender_ipos);
+        }
+
+        for (uint32_t ctn_id = 0; ctn_id < continues->n; ctn_id++) {
+            const uint16_t continue_ipos = *((const uint16_t*) dynbuf_get_unchecked(continues, ctn_id));
+
+            bcc_patch_jump(bcc, continue_ipos, loop_begin_ipos);
+        }
+    }
+
+    bcc_end_loop(bcc);
+
+    const auto loop_result_expr_result = bcc_emit_next(bcc, loop_result, loop_expr_flags);
+    if (!bcc_flag_check_n(loop_result_expr_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return loop_result_expr_result;
+    }
+
+    const auto loop_result_temp_reg = bcc_normalize_to_local_reg(bcc, loop_result_expr_result);
+
+    bcc_emit_inst_binary(bcc, nl_op_mov_rr, loop_temp_reg, loop_result_temp_reg);
+    bcc_update_curr_rc(bcc, bcc->top_reg);
+
+    return (bcc_result) {
+        .n = loop_temp_reg,
+        .cid = bcc->curr_cid,
+        .flags = flags,
+        .domain = nl_bcc_sym_local_r
+    };
 }
 
 [[nodiscard]]
 bcc_result bcc_emit_loop_abator(bcc_state* bcc, const ast_node* node, uint16_t flags) {
-    bcc_report_err(bcc, "Unsupported syntax found in loop around here during bytecode compilation.", bcc->line, bcc->col);
+    bcc_loopinfo* const loop_record = dynbuf_last_mut(&bcc->loops);
+    const auto abator_node = &node->data.lab;
+    const ast_node* const abator_result = abator_node->inner;
 
-    return bcc_dud_result_v; // todo: implement later
+    // ! IMPORTANT: Mandate a parent loop for correct semantics of break / continue exprs. 
+    if (!loop_record) {
+        bcc_report_err(bcc, "Expected this break / continue to be within a loop around here.", bcc->line, bcc->col);
+
+        return bcc_dud_result_v;
+    }
+
+    if (abator_result != nullptr) {
+        const auto loop_abator_expr_result = bcc_emit_next(bcc, abator_result, flags);
+        if (!bcc_flag_check_n(loop_abator_expr_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+            return loop_abator_expr_result;
+        }
+
+        // ? Breaks MUST update the temp accumulator register for their loop. The loop expression would "resolve" with that value at runtime.
+        const auto loop_temp_result_reg = loop_record->acc_reg;
+        const auto loop_abator_temp_reg = bcc_normalize_to_local_reg(bcc, loop_abator_expr_result);
+
+        bcc_emit_inst_binary(bcc, nl_op_mov_rr, loop_temp_result_reg, loop_abator_temp_reg);
+
+        const auto loop_abator_ipos = bcc_emit_inst_unary(bcc, nl_op_jmp, 0);
+
+        dynbuf_push(&loop_record->exit_iposv, &loop_abator_ipos);
+    } else {
+        // ! IMPORTANT: continue exprs. lack `<result-exprs>` as they continue evaluation of the loop BEFORE a result if any.
+        const auto loop_abator_ipos = bcc_emit_inst_unary(bcc, nl_op_jmp, 0);
+
+        dynbuf_push(&loop_record->rep_iposv, &loop_abator_ipos);
+    }
+
+    return (bcc_result) {
+        .n = 0,
+        .cid = bcc->curr_cid,
+        .flags = flags,
+        .domain = nl_bcc_sym_non_locator
+    };
 }
 
 bcc_result bcc_emit_def_binding(bcc_state* bcc, tk name_tk, const ast_node* initializer, uint16_t flags) {
@@ -1238,6 +1366,7 @@ bcc_result bcc_emit_stmt_def(bcc_state* bcc, const ast_node* node, uint16_t flag
     };
 }
 
+// ! SYNOPSIS:
 // ! 1. visit only defs to track local regs for variables under `nl_bcc_cf_pass_defs`...
 // ! 2. visit everything else (emit def bindings' initializer movs to prior local regs)...
 // ! 3. If block is a baseline body of a lambda, use a temp register for the last value.
