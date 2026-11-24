@@ -1223,7 +1223,7 @@ bcc_result bcc_emit_loop(bcc_state* bcc, const ast_node* node, uint16_t flags) {
         return loop_body_result;
     }
 
-    const auto loop_updated_ip = bcc_next_ip(bcc);
+    const auto loop_updater_ip = bcc_next_ip(bcc);
     const auto loop_update_result = bcc_emit_next(bcc, loop_update, loop_expr_flags);
     if (!bcc_flag_check_n(loop_update_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
         return loop_update_result;
@@ -1247,7 +1247,7 @@ bcc_result bcc_emit_loop(bcc_state* bcc, const ast_node* node, uint16_t flags) {
         for (uint32_t ctn_id = 0; ctn_id < continues->n; ctn_id++) {
             const uint16_t continue_ipos = *((const uint16_t*) dynbuf_get_unchecked(continues, ctn_id));
 
-            bcc_patch_jump(bcc, continue_ipos, loop_begin_ipos);
+            bcc_patch_jump(bcc, continue_ipos, loop_updater_ip);
         }
     }
 
@@ -1268,6 +1268,7 @@ bcc_result bcc_emit_loop_abator(bcc_state* bcc, const ast_node* node, uint16_t f
     bcc_loopinfo* const loop_record = dynbuf_last_mut(&bcc->loops);
     const auto abator_node = &node->data.lab;
     const ast_node* const abator_result = abator_node->inner;
+    const auto abator_is_break = abator_node->is_break;
 
     // ! IMPORTANT: Mandate a parent loop for correct semantics of break / continue exprs. 
     if (!loop_record) {
@@ -1276,25 +1277,23 @@ bcc_result bcc_emit_loop_abator(bcc_state* bcc, const ast_node* node, uint16_t f
         return bcc_dud_result_v;
     }
 
-    if (abator_result != nullptr) {
-        const auto loop_abator_expr_result = bcc_emit_next(bcc, abator_result, flags);
-        if (!bcc_flag_check_n(loop_abator_expr_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
-            return loop_abator_expr_result;
-        }
+    const auto loop_abator_expr_result = bcc_emit_next(bcc, abator_result, flags);
+    if (!bcc_flag_check_n(loop_abator_expr_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return loop_abator_expr_result;
+    }
 
-        // ? Breaks MUST update the temp accumulator register for their loop. The loop expression would "resolve" with that value at runtime.
-        const auto loop_temp_result_reg = loop_record->acc_reg;
-        const auto loop_abator_temp_reg = bcc_normalize_to_local_reg(bcc, loop_abator_expr_result);
+    // ? Breaks MUST update the temp accumulator register for their loop. The loop expression would "resolve" with that value at runtime.
+    // ? Continues MUST update the temp loop accumulator too, allowing greater control of loop results.
+    const auto loop_temp_result_reg = loop_record->acc_reg;
+    const auto loop_abator_temp_reg = bcc_normalize_to_local_reg(bcc, loop_abator_expr_result);
 
-        bcc_emit_inst_binary(bcc, nl_op_mov_rr, loop_temp_result_reg, loop_abator_temp_reg);
+    bcc_emit_inst_binary(bcc, nl_op_mov_rr, loop_temp_result_reg, loop_abator_temp_reg);
 
-        const auto loop_abator_ipos = bcc_emit_inst_unary(bcc, nl_op_jmp, 0);
+    const auto loop_abator_ipos = bcc_emit_inst_unary(bcc, nl_op_jmp, 0);
 
+    if (abator_is_break) {
         dynbuf_push(&loop_record->exit_iposv, &loop_abator_ipos);
     } else {
-        // ! IMPORTANT: continue exprs. lack `<result-exprs>` as they continue evaluation of the loop BEFORE a result if any.
-        const auto loop_abator_ipos = bcc_emit_inst_unary(bcc, nl_op_jmp, 0);
-
         dynbuf_push(&loop_record->rep_iposv, &loop_abator_ipos);
     }
 
@@ -1434,7 +1433,7 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
     } else {
         if (last_value_reg >= 0) {
             bcc_emit_inst_binary(bcc, nl_op_mov_rr, block_baseline_reg, last_value_reg);
-            bcc->top_reg = block_baseline_reg + 1;
+            // bcc->top_reg = block_baseline_reg + 1;
 
             return (bcc_result) {
                 .n = block_baseline_reg,
@@ -1444,7 +1443,7 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
             };
         } else {
             bcc_emit_inst_unary(bcc, nl_op_store_nil, block_baseline_reg);
-            bcc->top_reg = block_baseline_reg + 1;
+            // bcc->top_reg = block_baseline_reg + 1;
 
             return (bcc_result) {
                 .n = block_baseline_reg,

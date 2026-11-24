@@ -844,10 +844,9 @@ ast_node* nl_parse_loop(parser* p, const str* source, bool is_expr) {
 ast_node* nl_parse_loop_abator(parser* p, const str* source, bool is_break) {
     parser_consume(p, source); // ? eat prechecked 'break' / 'continue'
 
-    ast_node* result_expr_ptr = nullptr;
-
-    if (is_break) {
-        result_expr_ptr = nl_parse_next(p, source, true);
+    ast_node* result_expr_ptr = nl_parse_next(p, source, true);
+    if (!result_expr_ptr) {
+        return nullptr;
     }
 
     if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_semicolon }, 1)) {
@@ -859,7 +858,8 @@ ast_node* nl_parse_loop_abator(parser* p, const str* source, bool is_break) {
 
     return nl_make_ast_ptr((ast_node) {
         .data.lab = {
-            .inner = result_expr_ptr
+            .inner = result_expr_ptr,
+            .is_break = is_break
         },
         .tag = nl_ast_loop_abator
     });

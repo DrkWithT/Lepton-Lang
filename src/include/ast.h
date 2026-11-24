@@ -149,7 +149,8 @@ typedef struct nl_ast_loop_t {
 } loop;
 
 typedef struct nl_loop_abator_t {
-    ast_node* inner;    // `nullptr` on `continue;` or not `nullptr` on `break <expr>;`
+    ast_node* inner;
+    bool is_break;
 } loop_abator;
 
 typedef struct nl_ast_stmt_def_t {
