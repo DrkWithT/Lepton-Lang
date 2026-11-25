@@ -1,17 +1,22 @@
-`test metatables`
+`test structs`
 
-def foo = ${
-    a: 1,
-    b: 2,
-    x: ${
-        a: 42
+trait Seq {
+    next: fun (self) -> {
+        def x = self.curr;
+
+        self.curr += self.s;
+
+        ret x;
     }
+}
+
+def makeSeq = fun (initial, step) -> new Seq {
+    curr: initial,
+    s: step
 };
 
-def bar = $[1, 2];
+def iota = makeSeq(0, 1);
 
-assert(foo.a == 1);
-assert(foo.b == 2);
-assert(foo.x.a == 42);
-assert(bar.(0) == 1);
-assert(bar.(1) == 2);
+assert(iota.next() == 0, "Expected 0");
+assert(iota.next() == 1, "Expected 1");
+assert(iota.next() == 2, "Expected 2");

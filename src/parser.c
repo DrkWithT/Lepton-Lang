@@ -15,6 +15,9 @@ static constexpr def_binding nl_invalid_def_bind_v = {
 
 
 [[nodiscard]]
+ast_node* nl_parse_new_table(parser* p, const str* source);
+
+[[nodiscard]]
 ast_node* nl_parse_cond(parser* p, const str* source, bool is_expr);
 
 [[nodiscard]]
@@ -139,6 +142,7 @@ ast_node* nl_parse_literal(parser* p, const str* source) {
         }
         case nl_tk_kw_cond: return nl_parse_cond(p, source, true);
         case nl_tk_kw_loop: return nl_parse_loop(p, source, true);
+        case nl_tk_kw_new: return nl_parse_new_table(p, source);
         case nl_tk_lparen: {
             parser_consume(p, source);
 
@@ -174,16 +178,102 @@ ast_node* nl_parse_literal_array(parser* p, const str* source) {
 }
 
 [[nodiscard]]
-table_prop nl_parse_table_prop(parser* p, const str* source) {
-    return (table_prop) {
-        .key = nullptr,
-        .expr = nullptr
-    }; // todo: implement this as stated in README
+tfield nl_parse_tfield(parser* p, const str* source) {
+    const auto first_tk = p->curr;
+
+    if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_identifier }, 1)) {
+        parser_report_mini_error(p, first_tk.line, first_tk.col, "Expected name for object field.");
+
+        return (tfield) {
+            .initial = nullptr,
+            .name = {.begin = 0, .n = 0, .line = first_tk.line, first_tk.col, .tag = nl_tk_unknown }
+        };
+    }
+
+    if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_colon }, 1)) {
+        parser_report_mini_error(p, p->line, p->col, "Expected ':' after object field name.");
+
+        return (tfield) {
+            .initial = nullptr,
+            .name = {.begin = 0, .n = 0, .line = first_tk.line, first_tk.col, .tag = nl_tk_unknown }
+        };
+    }
+
+    auto tfield_initializer = nl_parse_next(p, source, true);
+    if (!tfield_initializer) {
+        return (tfield) {
+            .initial = nullptr,
+            .name = {.begin = 0, .n = 0, .line = first_tk.line, first_tk.col, .tag = nl_tk_unknown }
+        };
+    }
+
+    return (tfield) {
+        .initial = tfield_initializer,
+        .name = first_tk
+    };
 }
 
+// ! Syntax Rules:
+// ! <new-table> ::= "new" <identifier> "{" <fields> "}"
+// ! <fields> ::= ( <field> ";" )*
+// ! <field> ::= ( <identifier> ":" <expr> )
 [[nodiscard]]
-ast_node* nl_parse_literal_table(parser* p, const str* source) {
-    return nullptr; // todo: implement this as stated in README
+ast_node* nl_parse_new_table(parser* p, const str* source) {
+    parser_consume(p, source); // ? eat prechecked 'new'
+
+    if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_kw_nil, nl_tk_identifier }, 2)) {
+        parser_report_mini_error(p, p->curr.line, p->curr.col, "Expected nil or named trait for object here.");
+
+        return nullptr;
+    }
+
+    const tk used_trait = p->prev;
+    auto initial_fields = dynbuf_new(sizeof(tfield), 4, nl_ast_tfield_del);
+
+    if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_lbrace }, 1)) {
+        dynbuf_del(&initial_fields);
+        parser_report_mini_error(p, p->curr.line, p->curr.col, "");
+
+        return nullptr;
+    }
+
+    auto first_tfield = nl_parse_tfield(p, source);
+    if (!first_tfield.initial) {
+        dynbuf_del(&initial_fields);
+
+        return nullptr;
+    }
+
+    dynbuf_push(&initial_fields, &first_tfield);
+
+    while (!parser_at_eof(p)) {
+        if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_comma }, 1)) {
+            break;
+        }
+
+        auto next_tfield = nl_parse_tfield(p, source);
+        if (!next_tfield.initial) {
+            dynbuf_del(&initial_fields);
+
+            return nullptr;
+        }
+
+        dynbuf_push(&initial_fields, &next_tfield);
+    }
+
+    if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_rbrace }, 1)) {
+        dynbuf_del(&initial_fields);
+
+        return nullptr;
+    }
+
+    return nl_make_ast_ptr((ast_node) {
+        .data.tbl = {
+            .props = initial_fields,
+            .trait_name = used_trait
+        },
+        .tag = nl_ast_literal_new_table
+    });
 }
 
 // ! Syntax Rules:
@@ -687,6 +777,65 @@ ast_node* nl_parse_assignment(parser* p, const str* source) {
             .op = assignment_op
         },
         .tag = nl_ast_expr_assign
+    });
+}
+
+[[nodiscard]]
+ast_node* nl_parse_trait_decl(parser* p, const str* source) {
+    parser_consume(p, source); // ? eat prechecked 'trait'
+
+    if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_identifier }, 1)) {
+        parser_report_mini_error(p, p->curr.line, p->curr.col, "Expected name for trait declaration here.");
+
+        return nullptr;
+    }
+
+    const tk trait_name = p->prev;
+    auto trait_fields = dynbuf_new(sizeof(tfield), 4, nl_ast_tfield_del);
+
+    if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_lbrace }, 1)) {
+        dynbuf_del(&trait_fields);
+        parser_report_mini_error(p, p->curr.line, p->curr.col, "");
+
+        return nullptr;
+    }
+
+    auto first_tfield = nl_parse_tfield(p, source);
+    if (!first_tfield.initial) {
+        dynbuf_del(&trait_fields);
+
+        return nullptr;
+    }
+
+    dynbuf_push(&trait_fields, &first_tfield);
+
+    while (!parser_at_eof(p)) {
+        if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_comma }, 1)) {
+            break;
+        }
+
+        auto next_tfield = nl_parse_tfield(p, source);
+        if (!next_tfield.initial) {
+            dynbuf_del(&trait_fields);
+
+            return nullptr;
+        }
+
+        dynbuf_push(&trait_fields, &next_tfield);
+    }
+
+    if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_rbrace }, 1)) {
+        dynbuf_del(&trait_fields);
+
+        return nullptr;
+    }
+
+    return nl_make_ast_ptr((ast_node) {
+        .data.trt = {
+            .fields = trait_fields,
+            .name = trait_name
+        },
+        .tag = nl_ast_trait_decl
     });
 }
 
