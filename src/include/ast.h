@@ -10,7 +10,7 @@ typedef enum nl_ast_tag_t : uint8_t {
     nl_ast_invalid,
     nl_ast_literal,
     nl_ast_literal_array,
-    nl_ast_literal_table,
+    nl_ast_literal_new_table,
     nl_ast_expr_func,
     nl_ast_expr_access,
     nl_ast_expr_call,
@@ -18,6 +18,7 @@ typedef enum nl_ast_tag_t : uint8_t {
     nl_ast_binary_normal,
     nl_ast_binary_logical,
     nl_ast_expr_assign,
+    nl_ast_trait_decl,
     nl_ast_cond,
     nl_ast_loop,
     nl_ast_loop_abator,
@@ -67,14 +68,16 @@ typedef struct nl_ast_literal_array_t {
     dynbuf items;   // stores dynamic array of `ast_node`
 } array;
 
-typedef struct nl_ast_table_prop_t {
-    ast_node* key;
-    ast_node* expr;
-} table_prop;
+// ! For properties of trait objects or plain old objects.
+typedef struct nl_ast_tfield_t {
+    ast_node* initial;
+    tk name;
+} tfield;
 
-typedef struct nl_ast_literal_table_t {
+typedef struct nl_ast_new_table_t {
     dynbuf props;   // stores dynamic array of `ast_node`
-} table;
+    tk trait_name;  // trait name declared or instantiated
+} new_table;
 
 typedef struct nl_ast_expr_func_t {
     dynbuf param_tkv;   // token vector
@@ -126,6 +129,13 @@ typedef struct nl_ast_expr_assign_t {
     ast_node* src;
     ast_op op;
 } expr_assign;
+
+
+
+typedef struct nl_ast_trait_decl_t {
+    dynbuf fields; // contains dynamic `tfield[]`
+    tk name;
+} trait_decl;
 
 /**
  ### ABOUT
@@ -180,7 +190,7 @@ typedef struct nl_ast_node_t {
         uint8_t dud;
         literal lit;
         array arr;
-        table tbl;
+        new_table tbl;
         expr_func fun;
         expr_access accs;
         expr_call call;
@@ -188,6 +198,7 @@ typedef struct nl_ast_node_t {
         expr_binary_normal bin_n;
         expr_binary_logical bin_l;
         expr_assign ass;
+        trait_decl trt;
         cond cnd;
         loop lp;
         loop_abator lab;
@@ -204,7 +215,7 @@ typedef struct nl_ast_node_t {
 [[nodiscard]]
 literal nl_ast_literal_new(tk token);
 
-void nl_ast_table_prop_del(void* self);
+void nl_ast_tfield_del(void* self);
 void nl_ast_part_access_del(void* self);
 void nl_ast_cond_entry_del(void* self);
 void nl_ast_def_binding_del(void* self);

@@ -5,8 +5,8 @@
 void nl_ast_invalid_del([[maybe_unused]] void* self);
 void nl_ast_literal_del([[maybe_unused]] void* self);
 void nl_ast_literal_array_del(void* self);
-void nl_ast_table_prop_del(void* self);
-void nl_ast_literal_table_del(void* self);
+void nl_ast_tfield_del(void* self);
+void nl_ast_new_table_del(void* self);
 void nl_ast_expr_func_del(void* self);
 void nl_ast_part_access_del(void* self);
 void nl_ast_expr_access_del(void* self);
@@ -15,6 +15,7 @@ void nl_ast_unary_del(void* self);
 void nl_ast_binary_normal_del(void* self);
 void nl_ast_binary_logical_del(void* self);
 void nl_ast_expr_assign_del(void* self);
+void nl_ast_trait_decl_del(void* self);
 void nl_ast_cond_entry_del(void* self);
 void nl_ast_cond_del(void* self);
 void nl_ast_loop_del(void* self);
@@ -40,7 +41,8 @@ const nl_ast_node_deleter_t ast_deleters[] = {
     nl_ast_invalid_del,
     nl_ast_literal_del,
     nl_ast_literal_array_del,
-    nl_ast_literal_table_del,
+    nl_ast_tfield_del,
+    nl_ast_new_table_del,
     nl_ast_expr_func_del,
     nl_ast_expr_access_del,
     nl_ast_expr_call_del,
@@ -48,6 +50,7 @@ const nl_ast_node_deleter_t ast_deleters[] = {
     nl_ast_binary_normal_del,
     nl_ast_binary_logical_del,
     nl_ast_expr_assign_del,
+    nl_ast_trait_decl_del,
     nl_ast_cond_del,
     nl_ast_loop_del,
     nl_ast_loop_abator_del,
@@ -67,17 +70,16 @@ void nl_ast_literal_array_del(void* self) {
     dynbuf_del(&array_self->items);
 }
 
-void nl_ast_table_prop_del(void* self) {
-    auto table_prop_self = (table_prop*)self;
+void nl_ast_tfield_del(void* self) {
+    auto field_self = (tfield*) self;
 
-    ast_node_del(table_prop_self->key);
-    ast_node_del(table_prop_self->expr);
+    ast_node_del(field_self->initial);
 }
 
-void nl_ast_literal_table_del(void* self) {
-    auto table_self = (table*)self;
+void nl_ast_new_table_del(void* self) {
+    auto new_table_self = (new_table*) self;
 
-    dynbuf_del(&table_self->props);
+    dynbuf_del(&new_table_self->props);
 }
 
 void nl_ast_expr_func_del(void* self) {
@@ -134,6 +136,12 @@ void nl_ast_expr_assign_del(void* self) {
 
     ast_node_del(assign_self->dest);
     ast_node_del(assign_self->src);
+}
+
+void nl_ast_trait_decl_del(void* self) {
+    auto trait_decl_self = (trait_decl*) self;
+
+    dynbuf_del(&trait_decl_self->fields);
 }
 
 void nl_ast_cond_entry_del(void* self) {
