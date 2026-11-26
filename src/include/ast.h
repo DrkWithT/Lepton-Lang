@@ -18,14 +18,13 @@ typedef enum nl_ast_tag_t : uint8_t {
     nl_ast_binary_normal,
     nl_ast_binary_logical,
     nl_ast_expr_assign,
-    nl_ast_trait_decl,
     nl_ast_cond,
     nl_ast_loop,
     nl_ast_loop_abator,
     nl_ast_stmt_def,
     nl_ast_block,
     nl_ast_stmt_ret,
-    nl_ast_expr_stmt,
+    nl_ast_expr_stmt
 } ast_tag;
 
 typedef enum nl_ast_op : uint8_t {
@@ -75,7 +74,7 @@ typedef struct nl_ast_tfield_t {
 } tfield;
 
 typedef struct nl_ast_new_table_t {
-    dynbuf props;   // stores dynamic array of `ast_node`
+    dynbuf props;   // stores dynamic array of `tfield`
     tk trait_name;  // trait name declared or instantiated
 } new_table;
 
@@ -90,8 +89,8 @@ typedef struct nl_ast_expr_func_t {
 */
 typedef struct nl_ast_part_access_t {
     union {
+        tk name_tk;
         ast_node* comp_key;
-        uint32_t name_tpos;
     } data;
     bool is_named;
 } part_access;
@@ -131,11 +130,6 @@ typedef struct nl_ast_expr_assign_t {
 } expr_assign;
 
 
-
-typedef struct nl_ast_trait_decl_t {
-    dynbuf fields; // contains dynamic `tfield[]`
-    tk name;
-} trait_decl;
 
 /**
  ### ABOUT
@@ -198,7 +192,6 @@ typedef struct nl_ast_node_t {
         expr_binary_normal bin_n;
         expr_binary_logical bin_l;
         expr_assign ass;
-        trait_decl trt;
         cond cnd;
         loop lp;
         loop_abator lab;
