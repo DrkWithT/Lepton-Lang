@@ -16,6 +16,14 @@ void op_ld_arg(context* c);
 void op_ld_upval(context* c);
 void op_sto_upval(context* c);
 void op_close_upvals(context* c);
+void op_use_ic(context* c);
+void op_inst_trait(context* c);
+void op_seal_obj(context* c);
+void op_init_prop(context* c);
+void op_set_prop(context* c);
+void op_get_prop(context* c);
+void op_ref_self(context* c);
+void op_ref_super(context* c);
 void op_ld_accr(context* c);
 void op_test_nil(context* c);
 void op_neg_num(context* c);
@@ -54,6 +62,14 @@ static const nl_op_handler_t op_handlers[] = {
     op_ld_upval,
     op_sto_upval,
     op_close_upvals,
+    op_use_ic,
+    op_inst_trait,
+    op_seal_obj,
+    op_init_prop,
+    op_set_prop,
+    op_get_prop,
+    op_ref_self,
+    op_ref_super,
     op_ld_accr,
     op_test_nil,
     op_neg_num,
@@ -273,6 +289,38 @@ void op_close_upvals(context* c) {
 
     TAILCALL
     return dispatch_op(c);
+}
+
+void op_use_ic(context* c) {
+    ; // todo
+}
+
+void op_inst_trait(context* c) {
+    ; // todo
+}
+
+void op_seal_obj(context* c) {
+    ; // todo
+}
+
+void op_init_prop(context* c) {
+    ; // todo
+}
+
+void op_set_prop(context* c) {
+    ; // todo
+}
+
+void op_get_prop(context* c) {
+    ; // todo
+}
+
+void op_ref_self(context* c) {
+    ; // todo
+}
+
+void op_ref_super(context* c) {
+    ; // todo
 }
 
 void op_ld_accr(context* c) {

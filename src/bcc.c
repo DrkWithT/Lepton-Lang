@@ -15,6 +15,8 @@ static constexpr uint16_t bcc_initial_natives_cap_v = 8;
 static constexpr uint16_t bcc_max_arity = 255;
 static constexpr uint16_t bcc_max_errors = 3;
 
+
+
 [[nodiscard]]
 bool bcc_flag_check_n(uint16_t flags, const uint16_t* checks, uint8_t n) {
     for (uint8_t chk_i = 0; chk_i < n; chk_i++) {
@@ -44,7 +46,7 @@ uint16_t bcc_flag_unset_n(uint16_t flags, const uint16_t* omits, uint8_t n) {
     return flags;
 }
 
-static const auto bcc_dud_result_v = (bcc_result) {.n = 0, .flags = 0x00, .cid = 0x00, .domain = nl_bcc_sym_invalid};
+static const auto bcc_dud_result_v = (bcc_result) {.n = 0, .flags = 0x00, .cid = 0x00, .domain = nl_bcc_sym_invalid, .with_extra = false };
 
 
 
@@ -57,7 +59,7 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
 [[nodiscard]]
 bcc_result bcc_emit_literal_array(bcc_state* bcc, const ast_node* node, uint16_t flags);
 [[nodiscard]]
-bcc_result bcc_emit_literal_table(bcc_state* bcc, const ast_node* node, uint16_t flags);
+bcc_result bcc_emit_expr_new_table(bcc_state* bcc, const ast_node* node, uint16_t flags);
 [[nodiscard]]
 bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t flags);
 [[nodiscard]]
@@ -91,7 +93,7 @@ const bcc_emitter_t bcc_emitters[] = {
     bcc_emit_invalid,
     bcc_emit_literal,
     bcc_emit_literal_array,
-    bcc_emit_literal_table,
+    bcc_emit_expr_new_table,
     bcc_emit_expr_func,
     bcc_emit_expr_access,
     bcc_emit_expr_call,
@@ -252,7 +254,8 @@ void bcc_patch_jump(bcc_state* bcc, uint16_t target_ip, uint16_t dest_ipos) {
     }
 }
 
-void nl_bcc_place_ic(bcc_state* bcc, uint16_t ip, ic temp_ic) {
+[[nodiscard]]
+uint16_t nl_bcc_place_ic(bcc_state* bcc, ic temp_ic) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
     const uint16_t next_ic_len = curr_chunk->ic_len;
     const uint16_t curr_ic_cap = curr_chunk->ic_cap;
@@ -275,6 +278,8 @@ void nl_bcc_place_ic(bcc_state* bcc, uint16_t ip, ic temp_ic) {
 
     curr_chunk->icv[next_ic_len] = temp_ic;
     curr_chunk->ic_len++;
+
+    return next_ic_len;
 }
 
 void bcc_patch_upvals_n(bcc_state* bcc) {
@@ -443,6 +448,25 @@ uint16_t bcc_push_konst(bcc_state* bcc, value v) {
     curr_chunk->k_len++;
 
     return next_k_id;
+}
+
+[[nodiscard]]
+uint16_t bcc_record_prop_key_imm(bcc_state* bcc, str prop_key) {
+    const auto pre_found_info = bcc_lookup_symbol(bcc, prop_key, nl_bcc_sym_prop_key_imm, 'L');
+
+    if (pre_found_info) {
+        return pre_found_info->n;
+    }
+
+    symscope* curr_scope = dynbuf_last_mut(&bcc->scopes);
+    const syminfo next_prop_key_info = {
+        .name = prop_key,
+        .n = curr_scope->next_key_id++,
+        .cid = curr_scope->cid,
+        .tag = nl_bcc_sym_prop_key_imm
+    };
+
+    return ((const syminfo*) dynbuf_push(&curr_scope->infos, &next_prop_key_info))->n;
 }
 
 [[nodiscard]]
@@ -639,7 +663,8 @@ bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_
         .n = actual_info.n,
         .flags = flags,
         .cid = actual_info.cid,
-        .domain = actual_info.tag
+        .domain = actual_info.tag,
+        .with_extra = false 
     };
 }
 
@@ -648,6 +673,7 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
     const auto literal_node = &node->data.lit;
     const auto temp_tk = &literal_node->token;
     const auto temp_lexeme = tk_get_lexeme(temp_tk, bcc->source);
+    const auto temp_rvalue_flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
 
     bcc->line = temp_tk->line;
     bcc->col = temp_tk->col;
@@ -659,9 +685,10 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
 
             return (bcc_result) {
                 .n = bcc->top_reg++,
-                .flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1),
+                .flags = temp_rvalue_flags,
                 .cid = 0,
                 .domain = nl_bcc_sym_local_r,
+                .with_extra = false
             };
         }
         case nl_tk_kw_true: case nl_tk_kw_false: {
@@ -670,9 +697,32 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
 
             return (bcc_result) {
                 .n = bcc->top_reg++,
-                .flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1),
+                .flags = temp_rvalue_flags,
                 .cid = 0,
                 .domain = nl_bcc_sym_local_r,
+                .with_extra = false
+            };
+        }
+        case nl_tk_kw_self: {
+            bcc_emit_inst_unary(bcc, nl_op_ref_self, bcc->top_reg);
+
+            return (bcc_result) {
+                .n = bcc->top_reg++,
+                .flags = temp_rvalue_flags,
+                .cid = bcc->curr_cid,
+                .domain = nl_bcc_sym_local_r,
+                .with_extra = false
+            };
+        }
+        case nl_tk_kw_super: {
+            bcc_emit_inst_unary(bcc, nl_op_ref_super, bcc->top_reg);
+
+            return (bcc_result) {
+                .n = bcc->top_reg++,
+                .flags = temp_rvalue_flags,
+                .cid = bcc->curr_cid,
+                .domain = nl_bcc_sym_local_r,
+                .with_extra = false
             };
         }
         case nl_tk_identifier: {
@@ -689,9 +739,10 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
 
             return (bcc_result) {
                 .n = bcc->top_reg++,
-                .flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1),
+                .flags = temp_rvalue_flags,
                 .cid = 0,
-                .domain = nl_bcc_sym_local_r
+                .domain = nl_bcc_sym_local_r,
+                .with_extra = false
             };
         }
         case nl_tk_lt_num: {
@@ -705,9 +756,10 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
 
             return (bcc_result) {
                 .n = bcc->top_reg++,
-                .flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1),
+                .flags = temp_rvalue_flags,
                 .cid = 0,
-                .domain = nl_bcc_sym_local_r
+                .domain = nl_bcc_sym_local_r,
+                .with_extra = false
             };
         }
         case nl_tk_lt_plain_str: {
@@ -718,9 +770,10 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
 
             return (bcc_result) {
                 .n = bcc->top_reg++,
-                .flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1),
+                .flags = temp_rvalue_flags,
                 .cid = 0,
-                .domain = nl_bcc_sym_local_r
+                .domain = nl_bcc_sym_local_r,
+                .with_extra = false
             };
         }
         case nl_tk_lt_esc_str:
@@ -733,11 +786,6 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
 
 [[nodiscard]]
 bcc_result bcc_emit_literal_array(bcc_state* bcc, const ast_node* node, uint16_t flags) {
-    return bcc_dud_result_v; // todo: implement
-}
-
-[[nodiscard]]
-bcc_result bcc_emit_literal_table(bcc_state* bcc, const ast_node* node, uint16_t flags) {
     return bcc_dud_result_v; // todo: implement
 }
 
@@ -811,13 +859,172 @@ bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t fla
         .n = internal_lambda_reg,
         .flags = flags,
         .cid = bcc->curr_cid,
-        .domain = nl_bcc_sym_local_r
+        .domain = nl_bcc_sym_local_r,
+        .with_extra = false
+    };
+}
+
+[[nodiscard]]
+bcc_result bcc_emit_expr_new_table(bcc_state* bcc, const ast_node* node, uint16_t flags) {
+    const auto new_table_node = &node->data.tbl;
+    const tfield* new_table_entry_it = new_table_node->props.data;
+    const tfield* const new_table_entry_end = new_table_node->props.data + new_table_node->props.n;
+    const uint16_t new_table_trait_name_line = new_table_node->trait_name.line, new_table_trait_name_col = new_table_node->trait_name.col;
+
+    const auto object_temp_reg = bcc->top_reg++;
+    const auto trait_var_info = bcc_lookup_symbol(
+        bcc,
+        tk_get_lexeme(&new_table_node->trait_name, bcc->source),
+        nl_bcc_sym_local_r,
+        'B'
+    );
+
+    if (!trait_var_info) {
+        bcc_report_err(bcc, "Expected valid trait name here, did you declare it?", new_table_trait_name_line, new_table_trait_name_col);
+
+        return bcc_dud_result_v;
+    }
+
+    const uint16_t trait_var_reg = bcc_normalize_to_local_reg(bcc, (bcc_result) {
+        .n = trait_var_info->n,
+        .cid = trait_var_info->cid,
+        .flags = flags,
+        .domain = trait_var_info->tag,
+        .with_extra = false
+    });
+
+    bcc_emit_inst_binary(bcc, nl_op_inst_trait, object_temp_reg, trait_var_reg);
+
+    const auto prop_expr_flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
+
+    for (; new_table_entry_it < new_table_entry_end; new_table_entry_it++) {
+        const auto prop_key_id = bcc_record_prop_key_imm(bcc, tk_get_lexeme(&new_table_entry_it->name, bcc->source));
+
+        const auto prop_init_result = bcc_emit_next(bcc, new_table_entry_it->initial, prop_expr_flags);
+
+        if (!bcc_flag_check_n(prop_init_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+            return prop_init_result;
+        }
+
+        const auto prop_init_v_reg = bcc_normalize_to_local_reg(bcc, prop_init_result);
+
+        if (prop_init_v_reg == -1) {
+            bcc_report_err(bcc, "Could not resolve storage for field initializer. This is likely a bug.", new_table_entry_it->name.line, new_table_entry_it->name.col);
+
+            return bcc_dud_result_v;
+        }
+
+        bcc_emit_inst_ternary(bcc, nl_op_init_prop, object_temp_reg, prop_key_id, prop_init_v_reg);
+    }
+
+    bcc_emit_inst_unary(bcc, nl_op_seal_obj, object_temp_reg);
+    bcc->top_reg = object_temp_reg + 1;
+
+    return (bcc_result) {
+        .n = object_temp_reg,
+        .cid = bcc->curr_cid,
+        .flags = flags,
+        .domain = nl_bcc_sym_local_r,
+        .with_extra = false
     };
 }
 
 [[nodiscard]]
 bcc_result bcc_emit_expr_access(bcc_state* bcc, const ast_node* node, uint16_t flags) {
-    return bcc_dud_result_v; // todo: implement
+    const auto prop_access_node = &node->data.accs;
+    const ast_node* const prop_access_target = prop_access_node->target;
+    // ! For assignable lvalues in property accesses, leave the last key ID as a temporary ABOVE the target object register.
+    const part_access* prop_accesses = prop_access_node->accesses.data;
+
+    
+    const bool prop_accesses_in_lhs = bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
+    const uint16_t prop_access_last_pos = prop_accesses_in_lhs ? prop_access_node->accesses.n - 1 : prop_access_node->accesses.n;
+    const auto access_key_flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
+
+    const auto object_target_result = bcc_emit_next(bcc, prop_access_target, access_key_flags);
+    if (!bcc_flag_check_n(object_target_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+        return object_target_result;
+    }
+
+    const uint16_t object_temp_reg = bcc_normalize_to_local_reg(bcc, object_target_result);
+    const uint16_t temp_item_reg = bcc->top_reg++; // ! Reserve register just above the target object's reference to avoid losing it for possible method calls. Above the target will be a property sub-value, possibly a method.
+
+    bcc_emit_inst_binary(bcc, nl_op_mov_rr, temp_item_reg, object_temp_reg);
+
+    for (uint16_t prop_access_pos = 0; prop_access_pos < prop_access_last_pos; prop_access_pos++) {
+        const auto next_prop_access = &prop_accesses[prop_access_pos];
+        const auto prop_site_ic_id = nl_bcc_place_ic(bcc, (ic) {
+            .shape_ids = {[3] = -1},
+            .recv_ids = {[3] = -1},
+            .obj_offsets = {[3] = -1},
+            .state = nl_ics_idle,
+        });
+
+        if (next_prop_access->is_named) {
+            const auto prop_key_imm = bcc_record_prop_key_imm(bcc, tk_get_lexeme(&next_prop_access->data.name_tk, bcc->source));
+            
+            bcc_emit_inst_unary(bcc, nl_op_use_ic, prop_site_ic_id);
+            bcc_emit_inst_ternary(bcc, nl_op_get_prop, temp_item_reg, object_temp_reg, prop_key_imm);
+        } else {
+            const auto prop_comp_key_result = bcc_emit_next(bcc, next_prop_access->data.comp_key, access_key_flags);
+
+            if (!bcc_flag_check_n(prop_comp_key_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+                return prop_comp_key_result;
+            }
+
+            const uint16_t prop_comp_key_reg = bcc_normalize_to_local_reg(bcc, prop_comp_key_result);
+
+            bcc_emit_inst_unary(bcc, nl_op_use_ic, prop_site_ic_id);
+            bcc_emit_inst_ternary(bcc, nl_op_get_item, temp_item_reg, object_temp_reg, prop_comp_key_reg);
+
+            bcc->top_reg = temp_item_reg + 1;
+        }
+
+        if (prop_access_pos + 1 < prop_access_last_pos) {
+            bcc_emit_inst_binary(bcc, nl_op_mov_rr, object_temp_reg, temp_item_reg);
+        }
+    }
+
+    if (prop_accesses_in_lhs) {
+        const auto trailing_access = &prop_accesses[prop_access_last_pos];
+
+        if (trailing_access->is_named) {
+            // ! IMPORTANT: Record last trailing key name of target.key1, .key2, ... .keyLast to later use for set_prop opcode upon property assignments.
+            return (bcc_result) {
+                .n = bcc_record_prop_key_imm(bcc, tk_get_lexeme(&trailing_access->data.name_tk, bcc->source)),
+                .flags = flags,
+                .cid = bcc->curr_cid,
+                .extra_dest_reg = object_temp_reg,
+                .domain = nl_bcc_sym_prop_key_imm,
+                .with_extra = true,
+            };
+        } else {
+            const auto trailing_comp_key_result = bcc_emit_next(bcc, trailing_access->data.comp_key, access_key_flags);
+            if (!bcc_flag_check_n(trailing_comp_key_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
+                return trailing_comp_key_result;
+            }
+
+            const auto trailing_comp_key_reg = bcc_normalize_to_local_reg(bcc, trailing_comp_key_result);
+
+            return (bcc_result) {
+                .n = trailing_comp_key_reg,
+                .flags = flags,
+                .cid = bcc->curr_cid,
+                .extra_dest_reg = object_temp_reg,
+                .domain = nl_bcc_sym_local_r,
+                .with_extra = true
+            };
+        }
+    } else {   
+        return (bcc_result) {
+            .n = temp_item_reg,
+            .cid = bcc->curr_cid,
+            .flags = flags,
+            .extra_dest_reg = object_temp_reg,
+            .domain = nl_bcc_sym_local_r,
+            .with_extra = true
+        };
+    }
 }
 
 [[nodiscard]]
@@ -890,7 +1097,8 @@ bcc_result bcc_emit_expr_call(bcc_state* bcc, const ast_node* node, uint16_t fla
         .n = accr_spill_reg,
         .cid = bcc->curr_cid,
         .flags = flags,
-        .domain = nl_bcc_sym_local_r
+        .domain = nl_bcc_sym_local_r,
+        .with_extra = false
     };
 }
 
@@ -937,7 +1145,8 @@ bcc_result bcc_emit_unary(bcc_state* bcc, const ast_node* node, uint16_t flags) 
         .n = resolved_reg,
         .cid = bcc->curr_cid,
         .flags = flags,
-        .domain = nl_bcc_sym_local_r
+        .domain = nl_bcc_sym_local_r,
+        .with_extra = false
     };
 }
 
@@ -990,7 +1199,8 @@ bcc_result bcc_emit_binary_normal(bcc_state* bcc, const ast_node* node, uint16_t
         .n = resolved_lhs_reg,
         .flags = binary_operand_flags,
         .cid = bcc->curr_cid,
-        .domain = nl_bcc_sym_local_r
+        .domain = nl_bcc_sym_local_r,
+        .with_extra = false
     };
 }
 
@@ -1035,7 +1245,8 @@ bcc_result bcc_emit_binary_logical(bcc_state* bcc, const ast_node* node, uint16_
         .n = resolved_lhs_reg,
         .cid = bcc->curr_cid,
         .flags = operand_flags,
-        .domain = nl_bcc_sym_local_r
+        .domain = nl_bcc_sym_local_r,
+        .with_extra = false
     };
 }
 
@@ -1085,6 +1296,18 @@ bcc_result bcc_emit_expr_assign(bcc_state* bcc, const ast_node* node, uint16_t f
         } else {
             // todo: support upvalue in-place MDAS opcodes...
             bcc_report_err(bcc, "Compound assignment operators are unsupported for captured names.", bcc->line, bcc->col);
+
+            return bcc_dud_result_v;
+        }
+    } else if (dest_result.with_extra) {
+        if (dest_result.domain == nl_bcc_sym_prop_key_imm) {
+            // ! Handle assignment to named property here... FIXME??
+            bcc_emit_inst_ternary(bcc, nl_op_set_prop, dest_result.extra_dest_reg, dest_result.n, src_reg);
+        } else if (dest_result.domain == nl_bcc_sym_local_r) {
+            // ! Handle assignment to computed property here... FIXME??
+            bcc_emit_inst_ternary(bcc, nl_op_set_item, dest_result.extra_dest_reg, dest_result.n, src_reg);
+        } else {
+            bcc_report_err(bcc, "Invalid assignment destination found around here.", bcc->line, bcc->col);
 
             return bcc_dud_result_v;
         }
@@ -1175,14 +1398,16 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
             .n = cond_result_value_reg,
             .cid = bcc->curr_cid,
             .flags = flags,
-            .domain = nl_bcc_sym_local_r
+            .domain = nl_bcc_sym_local_r,
+            .with_extra = false
         };
     } else {
         return (bcc_result) {
             .n = 0,
             .cid = 0,
             .flags = flags,
-            .domain = nl_bcc_sym_invalid
+            .domain = nl_bcc_sym_invalid,
+            .with_extra = false
         };
     }
 }
@@ -1259,7 +1484,8 @@ bcc_result bcc_emit_loop(bcc_state* bcc, const ast_node* node, uint16_t flags) {
         .n = loop_temp_reg,
         .cid = bcc->curr_cid,
         .flags = flags,
-        .domain = nl_bcc_sym_local_r
+        .domain = nl_bcc_sym_local_r,
+        .with_extra = false
     };
 }
 
@@ -1301,7 +1527,8 @@ bcc_result bcc_emit_loop_abator(bcc_state* bcc, const ast_node* node, uint16_t f
         .n = 0,
         .cid = bcc->curr_cid,
         .flags = flags,
-        .domain = nl_bcc_sym_non_locator
+        .domain = nl_bcc_sym_non_locator,
+        .with_extra = false
     };
 }
 
@@ -1318,7 +1545,8 @@ bcc_result bcc_emit_def_binding(bcc_state* bcc, tk name_tk, const ast_node* init
             .n = reserved_local_result->n,
             .cid = reserved_local_result->cid,
             .flags = flags,
-            .domain = nl_bcc_sym_local_r
+            .domain = nl_bcc_sym_local_r,
+            .with_extra = false
         }; 
     } else {
         // ? This info should be already recorded by the previous def visits, so no nullptr checks are needed.
@@ -1334,7 +1562,8 @@ bcc_result bcc_emit_def_binding(bcc_state* bcc, tk name_tk, const ast_node* init
             .n = found_local_info->n,
             .cid = reserved_init_result.cid,
             .flags = flags,
-            .domain = nl_bcc_sym_local_r
+            .domain = nl_bcc_sym_local_r,
+            .with_extra = false
         };
     }
 }
@@ -1353,7 +1582,8 @@ bcc_result bcc_emit_stmt_def(bcc_state* bcc, const ast_node* node, uint16_t flag
         .n = 0,
         .cid = 0,
         .flags = flags,
-        .domain = nl_bcc_sym_non_locator
+        .domain = nl_bcc_sym_non_locator,
+        .with_extra = false
     };
 }
 
@@ -1416,7 +1646,8 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
                 .n = last_value_reg,
                 .cid = bcc->curr_cid,
                 .flags = flags,
-                .domain = nl_bcc_sym_local_r
+                .domain = nl_bcc_sym_local_r,
+                .with_extra = false
             };
         } else {
             bcc_emit_inst_nonary(bcc, nl_op_close_upvals);
@@ -1427,7 +1658,8 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
                 .n = block_baseline_reg,
                 .cid = bcc->curr_cid,
                 .flags = flags,
-                .domain = nl_bcc_sym_local_r
+                .domain = nl_bcc_sym_local_r,
+                .with_extra = false
             };
         }
     } else {
@@ -1439,7 +1671,8 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
                 .n = block_baseline_reg,
                 .cid = bcc->curr_cid,
                 .flags = flags,
-                .domain = nl_bcc_sym_local_r
+                .domain = nl_bcc_sym_local_r,
+                .with_extra = false
             };
         } else {
             bcc_emit_inst_unary(bcc, nl_op_store_nil, block_baseline_reg);
@@ -1449,7 +1682,8 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
                 .n = block_baseline_reg,
                 .cid = bcc->curr_cid,
                 .flags = flags,
-                .domain = nl_bcc_sym_local_r
+                .domain = nl_bcc_sym_local_r,
+                .with_extra = false
             };
         }
     }
@@ -1477,7 +1711,8 @@ bcc_result bcc_emit_stmt_ret(bcc_state* bcc, const ast_node* node, uint16_t flag
         .n = 0,
         .cid = bcc->curr_cid,
         .flags = flags,
-        .domain = nl_bcc_sym_invalid
+        .domain = nl_bcc_sym_invalid,
+        .with_extra = false
     };
 }
 

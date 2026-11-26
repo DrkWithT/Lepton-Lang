@@ -10,9 +10,10 @@
 
 typedef enum nl_bcc_symtag_t : uint8_t {
     nl_bcc_sym_invalid,
-    nl_bcc_sym_non_locator, // for statements which do something vs. return a value necessarily / skipped AST nodes
-    nl_bcc_sym_acc_r,       // call result
-    nl_bcc_sym_k,           // constant `value`
+    nl_bcc_sym_non_locator,     // for statements which do something vs. return a value necessarily / skipped AST nodes
+    nl_bcc_sym_prop_key_imm,    // for mapping property names as immediate u16 IDs
+    nl_bcc_sym_acc_r,           // call result
+    nl_bcc_sym_k,               // constant `value`
     nl_bcc_sym_global_k,
     nl_bcc_sym_local_r,
     nl_bcc_sym_foreign_local
@@ -37,7 +38,9 @@ typedef struct nl_bcc_result_t {
     int32_t n;
     uint16_t flags;
     uint16_t cid;
+    uint16_t extra_dest_reg;    // ! IMPORTANT: only usable if `.as_lingering_key = true`.
     symtag domain;
+    bool with_extra;
 } bcc_result;
 
 typedef struct nl_bcc_loopinfo_t {
@@ -51,6 +54,7 @@ typedef struct nl_bcc_symscope_t {
     str name;
     uint16_t top_konst; // next constant ID
     uint16_t next_ic;   // next IC ID
+    uint16_t next_key_id;   // next property name as ID
     uint16_t cid;       // associated chunk ID of scope's function
     uint16_t rc;        // register usage
 } symscope;
