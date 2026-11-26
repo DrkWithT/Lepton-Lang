@@ -25,9 +25,22 @@ My experiment of a more expression-oriented, terse, and dynamic scripting langua
     - Fix bcc and bytecode to support upvalues: remove var_scope and add upvalue set/get/close. **OK**
     - Fix context and then dispatcher to support new behavior. Add call frames. **OK**
     - Before a capturing function returns, it closes upvalues: the reference-holding `value` is moved into a concrete `value` per upvalue. **OK**
-    - Test VM on toy scripts.
- 8. Add GC.
- 9. Test further on larger scripts.
+ 8. Add objects.
+    - Add parsing for `new` expressions that may use traits. Support exotic objects with `new {...}`. **OK**
+    - Add BCC support for new expressions. **OK**
+    - Add helper methods for context to support object opcodes.
+    - Add dispatch table entries of and implement handlers for opcodes in VM.
+    - Add `println` function.
+    - Test.
+ 9. Add module support.
+    - Add parsing support for modules which combines all their ASTs into 1 TU & stores sources to IDs... Each module knows its source.
+      - Also support `module "name";` decls.
+    - Refactor compilation logic for modules:
+      - Fix AST unit to support source map and source IDs per AST node.
+      - Fix BCC to handle source mappings.
+ 10. Add GC.
+ 11. Add polyfills for `List`.
+ 12. Test further on larger scripts.
 
 ### Other Notes
 The first few commits are larger since I forgot to create the repo initially & I had to compensate with retroactive commits. No AI was used.
