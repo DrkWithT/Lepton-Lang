@@ -12,6 +12,11 @@ static constexpr def_binding nl_invalid_def_bind_v = {
     .name = { .begin = 0, .n = 1, .line = 1, .col = 1, .tag = nl_tk_unknown }
 };
 
+static constexpr part_access nl_invalid_part_access_v = {
+    .data.comp_key = nullptr,
+    .is_named = false
+};
+
 
 
 [[nodiscard]]
@@ -222,7 +227,7 @@ ast_node* nl_parse_new_table(parser* p, const str* source) {
     parser_consume(p, source); // ? eat prechecked 'new'
 
     if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_kw_nil, nl_tk_identifier }, 2)) {
-        parser_report_mini_error(p, p->curr.line, p->curr.col, "Expected nil or named trait for object here.");
+        parser_report_mini_error(p, p->curr.line, p->curr.col, "Expected nil or named 'trait' object for object here.");
 
         return nullptr;
     }
@@ -347,28 +352,97 @@ ast_node* nl_parse_expr_func(parser* p, const str* source) {
     });
 }
 
+// ! Syntax Rule:
+// ! <partial-access> ("." ( <identifier> | <literal / primary> ))*
 [[nodiscard]]
 part_access nl_parse_partial_access(parser* p, const str* source) {
-    return (part_access) {
-        .data.comp_key = nullptr,
-        .is_named = false
-    }; // todo
+    if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_dot }, 1)) {
+        parser_report_mini_error(p, p->curr.line, p->curr.col, "Expected '.' in property access here.");
+
+        return nl_invalid_part_access_v;
+    }
+
+    if (parser_consume_of(p, source, (tk_tag[]) { nl_tk_identifier }, 1)) {
+        return (part_access) {
+            .data.name_tk = p->prev,
+            .is_named = true
+        };
+    } else if (parser_consume_of(p, source, (tk_tag[]) { nl_tk_lparen }, 1)) {
+        auto temp_comp_key = nl_parse_next(p, source, true);
+
+        if (!temp_comp_key) {
+            return nl_invalid_part_access_v;
+        }
+
+        if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_rparen }, 1)) {
+            parser_report_mini_error(p, p->curr.line, p->curr.col, "Expected closing ')' in computed property access.");
+
+            return nl_invalid_part_access_v;
+        }
+
+        return (part_access) {
+            .data.comp_key = temp_comp_key,
+            .is_named = false
+        };
+    } else {   
+        parser_report_mini_error(p, p->curr.line, p->curr.col, "Expected a property name or computed expression after the '.' here.");
+
+        return nl_invalid_part_access_v;
+    }
 }
 
+// ! Syntax Rule:
+// ! <access> ::= <literal> <partial-access>*
 [[nodiscard]]
 ast_node* nl_parse_expr_access(parser* p, const str* source) {
-    return nullptr; // todo: implement this and use it in `nl_parse_expr_call`'s callee-expr.
+    auto target_object = nl_parse_literal(p, source);
+    if (!target_object) {
+        return nullptr;
+    }
+
+    if (!parser_match(p, (tk_tag[]) { nl_tk_dot }, 1)) {
+        return target_object;
+    }
+
+    auto access_steps = dynbuf_new(sizeof(part_access), 4, nl_ast_part_access_del);
+
+    while (!parser_at_eof(p)) {
+        if (!parser_match(p, (tk_tag[]) { nl_tk_dot }, 1)) {
+            break;
+        }
+
+        auto next_access_step = nl_parse_partial_access(p, source);
+
+        if (!next_access_step.is_named) {
+            if (!next_access_step.data.comp_key) {
+                dynbuf_del(&access_steps);
+                
+                return nullptr;
+            }
+        }
+
+        dynbuf_push(&access_steps, &next_access_step);
+    }
+
+    return nl_make_ast_ptr((ast_node) {
+        .data.accs = {
+            .accesses = access_steps,
+            .target = target_object
+        },
+        .tag = nl_ast_expr_access
+    });
 }
 
 [[nodiscard]]
 ast_node* nl_parse_expr_call(parser* p, const str* source) {
-    auto callee_ptr = nl_parse_literal(p, source); // ? see todo in `nl_parse_expr_access()`.
+    auto callee_ptr = nl_parse_expr_access(p, source);
     if (!callee_ptr) {
         return nullptr;
     }
 
+    // ? no '(' means no argument list completes a call... just pass on the expression...
     if (!parser_consume_of(p, source, (tk_tag[]) {nl_tk_lparen}, 1)) {
-        return callee_ptr; // ? no '(' means no argument list completes a call... just pass on the expression...
+        return callee_ptr;
     }
 
     auto temp_args = dynbuf_new(sizeof(ast_node), 4, ast_node_del);
@@ -777,65 +851,6 @@ ast_node* nl_parse_assignment(parser* p, const str* source) {
             .op = assignment_op
         },
         .tag = nl_ast_expr_assign
-    });
-}
-
-[[nodiscard]]
-ast_node* nl_parse_trait_decl(parser* p, const str* source) {
-    parser_consume(p, source); // ? eat prechecked 'trait'
-
-    if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_identifier }, 1)) {
-        parser_report_mini_error(p, p->curr.line, p->curr.col, "Expected name for trait declaration here.");
-
-        return nullptr;
-    }
-
-    const tk trait_name = p->prev;
-    auto trait_fields = dynbuf_new(sizeof(tfield), 4, nl_ast_tfield_del);
-
-    if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_lbrace }, 1)) {
-        dynbuf_del(&trait_fields);
-        parser_report_mini_error(p, p->curr.line, p->curr.col, "");
-
-        return nullptr;
-    }
-
-    auto first_tfield = nl_parse_tfield(p, source);
-    if (!first_tfield.initial) {
-        dynbuf_del(&trait_fields);
-
-        return nullptr;
-    }
-
-    dynbuf_push(&trait_fields, &first_tfield);
-
-    while (!parser_at_eof(p)) {
-        if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_comma }, 1)) {
-            break;
-        }
-
-        auto next_tfield = nl_parse_tfield(p, source);
-        if (!next_tfield.initial) {
-            dynbuf_del(&trait_fields);
-
-            return nullptr;
-        }
-
-        dynbuf_push(&trait_fields, &next_tfield);
-    }
-
-    if (!parser_consume_of(p, source, (tk_tag[]) { nl_tk_rbrace }, 1)) {
-        dynbuf_del(&trait_fields);
-
-        return nullptr;
-    }
-
-    return nl_make_ast_ptr((ast_node) {
-        .data.trt = {
-            .fields = trait_fields,
-            .name = trait_name
-        },
-        .tag = nl_ast_trait_decl
     });
 }
 

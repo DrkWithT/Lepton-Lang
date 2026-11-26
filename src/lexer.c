@@ -321,6 +321,7 @@ tk lexer_next(lexer* self, const str* source) {
     const auto peek_1 = lexer_peek_off(self, source, 0);
 
     switch (peek_1) {
+        case '.': return lexer_lex_single(self, source, nl_tk_dot);
         case ',': return lexer_lex_single(self, source, nl_tk_comma);
         case ':': return lexer_lex_single(self, source, nl_tk_colon);
         case ';': return lexer_lex_single(self, source, nl_tk_semicolon);
