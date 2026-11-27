@@ -28,7 +28,7 @@ typedef enum nl_op_t : uint8_t {
     nl_op_sto_upval,    // store_upvar <upval-ID> <upval-CID> src
     nl_op_close_upvals, // close_upvalues
     nl_op_use_ic,       // use_ic <ID>
-    nl_op_inst_trait,   // inst_trait dest trait-obj-var-src
+    nl_op_inst_trait,   // inst_trait dest trait-obj-var-src, prop-count
     nl_op_seal_obj,     // seal_obj dest
     nl_op_init_prop,    // init_prop dest key-id initializer-src
     nl_op_set_prop,     // set_prop dest key-id src
