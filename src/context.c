@@ -262,13 +262,11 @@ bool context_try_invoke(context* c, value callee, int32_t maybe_self_id) {
 
 [[nodiscard]]
 entity_handle_mut context_create_with_trait(context* c, value trait_v, uint16_t initial_named_props_n) {
-    entity_handle_mut created_object_handle = { .p = nullptr, .id = -1 };
+    int32_t trait_object_id = -1;
 
-    auto trait_object_p = ent_pool_get_mut(&c->pool_o,
-        (trait_v.tag == nl_vtag_obj)
-            ? trait_v.n
-            : -1
-    );
+    if (trait_v.tag == nl_vtag_obj) {
+        trait_object_id = ent_pool_get_mut(&c->pool_o, trait_v.n).id;
+    }
 
     NL_ALLOC_N(initial_named_props_n, value, temp_pvals, __FILE__, __LINE__)
     NL_ALLOC_N(4, value, temp_ivals, __FILE__, __LINE__)
@@ -277,7 +275,7 @@ entity_handle_mut context_create_with_trait(context* c, value trait_v, uint16_t 
         .pvals = temp_pvals,
         .ivals = temp_ivals,
         .shape_id = 0,
-        .proto_obj_id = trait_object_p.id,
+        .proto_obj_id = trait_object_id,
         .prop_n = 0,
         .prop_cap = initial_named_props_n,
         .item_n = 0,

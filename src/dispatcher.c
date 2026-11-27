@@ -22,6 +22,8 @@ void op_seal_obj(context* c);
 void op_init_prop(context* c);
 void op_set_prop(context* c);
 void op_get_prop(context* c);
+void op_set_item(context* c);
+void op_get_item(context* c);
 void op_ref_self(context* c);
 void op_ld_accr(context* c);
 void op_test_nil(context* c);
@@ -68,6 +70,8 @@ static const nl_op_handler_t op_handlers[] = {
     op_init_prop,
     op_set_prop,
     op_get_prop,
+    op_set_item,
+    op_get_item,
     op_ref_self,
     op_ld_accr,
     op_test_nil,
@@ -388,6 +392,18 @@ void op_get_prop(context* c) {
 
     TAILCALL
     return dispatch_op(c);
+}
+
+void op_set_item(context* c) {
+    c->flags = nl_ctxf_err_op; // todo: implement
+
+    return;
+}
+
+void op_get_item(context* c) {
+    c->flags = nl_ctxf_err_op; // todo: implement
+
+    return;
 }
 
 void op_ref_self(context* c) {

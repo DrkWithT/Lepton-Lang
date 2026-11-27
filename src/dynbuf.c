@@ -39,11 +39,11 @@ void dynbuf_del(dynbuf* self) {
 
     if (deleter_func != nullptr) {
         for (uint32_t del_index = 0; del_index < current_length; del_index++) {
-            deleter_func(buffer_data + del_index * item_sz);
+            deleter_func((uint8_t*) buffer_data + del_index * item_sz);
         }
     }
 
-    free(self->data);
+    free(buffer_data);
     self->data = nullptr;
 }
 
@@ -65,7 +65,7 @@ void* dynbuf_push(dynbuf* self, const void* src) {
         dynbuf_grow_to(self, (3 * self->cap) / 2);
     }
 
-    auto dest_ptr = self->data + old_len * self->item_size;
+    auto dest_ptr = ((uint8_t*) self->data) + old_len * self->item_size;
 
     memcpy(dest_ptr, src, self->item_size);
     self->n++;

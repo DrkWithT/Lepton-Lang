@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "table.h"
 
 
@@ -9,5 +10,4 @@ void metatable_del(void* t) {
     table_self->ivals = nullptr;
     free(table_self->pvals);
     table_self->pvals = nullptr;
-    table_self->layout = nullptr;
 }

@@ -82,7 +82,7 @@ void driver_show_version_and_exit(driver* d) {
 
 [[nodiscard]]
 bool driver_exec_bc(driver* d, program* pg) {
-    auto ctx = context_new(*pg);
+    auto ctx = context_new(*pg, d->config.max_objects);
 
     *pg = program_dud();
 
