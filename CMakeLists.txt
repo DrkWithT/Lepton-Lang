@@ -16,10 +16,15 @@ target_sources(neu_impl PRIVATE
     "${NEU_SRCS}/bytecode.c"
     "${NEU_SRCS}/bcc.c"
     "${NEU_SRCS}/closures.c"
+    "${NEU_SRCS}/shape_manager.c"
     "${NEU_SRCS}/context.c"
     "${NEU_SRCS}/dispatcher.c"
     "${NEU_SRCS}/driver.c"
 )
+
+if (DEFINED NEU_SANITIZER_OPTS)
+    target_link_options(neu_impl PRIVATE "-fsanitize=address -fno-omit-frame-pointer")
+endif ()
 
 add_executable(neu "${NEU_SRCS}/main.c")
 target_include_directories(neu PRIVATE "${NEU_INCLUDES}")
