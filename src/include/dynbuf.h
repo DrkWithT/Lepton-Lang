@@ -48,7 +48,7 @@ NL_CXX_INLINE const void* dynbuf_last(const dynbuf* self) {
         return nullptr;
     }
 
-    return self->data + (self->n - 1) * self->item_size;
+    return (const uint8_t*) self->data + (self->n - 1) * self->item_size;
 }
 
 [[nodiscard]]
@@ -57,7 +57,12 @@ NL_CXX_INLINE void* dynbuf_last_mut(dynbuf* self) {
         return nullptr;
     }
 
-    return self->data + (self->n - 1) * self->item_size;
+    return (uint8_t*) self->data + (self->n - 1) * self->item_size;
+}
+
+[[nodiscard]]
+NL_CXX_INLINE const void* dynbuf_last_unchecked(const dynbuf* self) {
+    return (const uint8_t*) self->data + (self->n - 1) * self->item_size;
 }
 
 [[nodiscard]]
@@ -66,7 +71,7 @@ NL_CXX_INLINE const void* dynbuf_get(const dynbuf* self, uint32_t pos) {
         return nullptr;
     }
 
-    return self->data + pos * self->item_size;
+    return (const uint8_t*) self->data + pos * self->item_size;
 }
 
 [[nodiscard]]
@@ -75,15 +80,15 @@ NL_CXX_INLINE void* dynbuf_get_mut(dynbuf* self, uint32_t pos) {
         return nullptr;
     }
 
-    return self->data + pos * self->item_size;
+    return (uint8_t*) self->data + pos * self->item_size;
 }
 
 [[nodiscard]]
 NL_CXX_INLINE const void* dynbuf_get_unchecked(const dynbuf* self, uint32_t pos) {
-    return self->data + pos * self->item_size;
+    return (const uint8_t*) self->data + pos * self->item_size;
 }
 
 [[nodiscard]]
 NL_CXX_INLINE void* dynbuf_get_mut_unchecked(dynbuf* self, uint32_t pos) {
-    return self->data + pos * self->item_size;
+    return (uint8_t*) self->data + pos * self->item_size;
 }

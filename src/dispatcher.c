@@ -23,7 +23,6 @@ void op_init_prop(context* c);
 void op_set_prop(context* c);
 void op_get_prop(context* c);
 void op_ref_self(context* c);
-void op_ref_super(context* c);
 void op_ld_accr(context* c);
 void op_test_nil(context* c);
 void op_neg_num(context* c);
@@ -46,6 +45,7 @@ void op_jmp(context* c);
 void op_mk_closure(context* c);
 void op_call(context* c);
 void op_call_n(context* c);
+void op_call_method(context* c);
 void op_ret(context* c);
 
 static const nl_op_handler_t op_handlers[] = {
@@ -69,7 +69,6 @@ static const nl_op_handler_t op_handlers[] = {
     op_set_prop,
     op_get_prop,
     op_ref_self,
-    op_ref_super,
     op_ld_accr,
     op_test_nil,
     op_neg_num,
@@ -92,6 +91,7 @@ static const nl_op_handler_t op_handlers[] = {
     op_mk_closure,
     op_call,
     op_call_n,
+    op_call_method,
     op_ret,
 };
 
@@ -292,35 +292,117 @@ void op_close_upvals(context* c) {
 }
 
 void op_use_ic(context* c) {
-    ; // todo
+    c->ip++;
+
+    c->curr_ic_id = decode_operand_at(c->ip);
+    c->ip += 2;
+
+    TAILCALL
+    return dispatch_op(c);
 }
 
 void op_inst_trait(context* c) {
-    ; // todo
+    c->ip++;
+
+    const auto dest_reg = decode_operand_at(c->ip);
+    const auto trait_var_reg = decode_operand_at(c->ip + 2);
+    const auto named_props_n = decode_operand_at(c->ip + 4);
+
+    auto temp_object_handle = context_create_with_trait(c, c->stack_bp[trait_var_reg], named_props_n);
+
+    if (temp_object_handle.id == -1) {
+        c->flags = nl_ctxf_err_ref;
+
+        return;
+    }
+
+    c->stack_bp[dest_reg] = (value) { .n = temp_object_handle.id, .tag = nl_vtag_obj };
+    c->ip += 6;
+
+    TAILCALL
+    return dispatch_op(c);
 }
 
 void op_seal_obj(context* c) {
-    ; // todo
+    c->ip++;
+
+    const auto target_object_reg = decode_operand_at(c->ip);
+
+    context_seal_object(c, c->stack_bp[target_object_reg]);
+    c->ip += 2;
+
+    TAILCALL
+    return dispatch_op(c);
 }
 
 void op_init_prop(context* c) {
-    ; // todo
+    c->ip++;
+
+    const auto dest_object_v = c->stack_bp[decode_operand_at(c->ip)];
+    const auto dest_key_id = decode_operand_at(c->ip + 2);
+    const auto src_v = c->stack_bp[decode_operand_at(c->ip + 4)];
+
+    context_init_property(c, dest_object_v, dest_key_id, src_v);
+    c->ip += 6;
+
+    TAILCALL
+    return dispatch_op(c);
 }
 
 void op_set_prop(context* c) {
-    ; // todo
+    c->ip++;
+
+    const auto dest_object_v = c->stack_bp[decode_operand_at(c->ip)];
+    const auto dest_key_id = decode_operand_at(c->ip + 2);
+    const auto src_v = c->stack_bp[decode_operand_at(c->ip + 4)];
+
+    if (!context_set_property(c, dest_object_v, dest_key_id, src_v)) {
+        c->flags = nl_ctxf_err_ref;
+
+        return;
+    }
+
+    c->ip += 6;
+
+    TAILCALL
+    return dispatch_op(c);
 }
 
 void op_get_prop(context* c) {
-    ; // todo
+    c->ip++;
+
+    const auto dest_reg = decode_operand_at(c->ip);
+    const auto src_object_v = c->stack_bp[decode_operand_at(c->ip + 2)];
+    const auto src_key_id = decode_operand_at(c->ip + 4);
+
+    auto prop_ref = context_get_property(c, src_object_v, src_key_id);
+
+    if (!prop_ref) {
+        c->flags = nl_ctxf_err_ref;
+
+        return;
+    } else {
+        c->stack_bp[dest_reg] = *prop_ref;
+        c->ip += 6;
+    }
+
+    TAILCALL
+    return dispatch_op(c);
 }
 
 void op_ref_self(context* c) {
-    ; // todo
-}
+    c->ip++;
 
-void op_ref_super(context* c) {
-    ; // todo
+    const auto self_dest_reg = decode_operand_at(c->ip);
+
+    c->stack_bp[self_dest_reg] = (value) {
+        .n = ((const context_frame*) dynbuf_last_unchecked(&c->frames))->self_obj_id,
+        .tag = nl_vtag_obj
+    };
+    c->ip += 2;
+
+    TAILCALL
+    return dispatch_op(c);
 }
 
 void op_ld_accr(context* c) {
@@ -680,9 +762,8 @@ void op_call(context* c) {
     const auto callee_v = c->stack_bp[
         decode_operand_at(c->ip)
     ];
-    const uint8_t callee_argc = decode_operand_at(c->ip + 2);
 
-    if (!context_try_invoke(c, callee_v, callee_argc)) {
+    if (!context_try_invoke(c, callee_v, -1)) {
         c->flags = nl_ctxf_err_ref;
 
         return;
@@ -710,10 +791,26 @@ void op_call_n(context* c) {
     return dispatch_op(c);
 }
 
+void op_call_method(context* c) {
+    c->ip++;
+
+    const auto self_object_reg = c->stack_bp[decode_operand_at(c->ip)];
+    const auto self_prop_id = decode_operand_at(c->ip + 2);
+
+    if (!context_try_invoke_method(c, self_object_reg, self_prop_id)) {
+        c->flags = nl_ctxf_err_op;
+
+        return;
+    }
+
+    TAILCALL
+    return dispatch_op(c);
+}
+
 void op_ret(context* c) {
     c->ip++;
 
-    const context_frame* callee_frame = dynbuf_last(&c->frames);
+    const context_frame* callee_frame = dynbuf_last_unchecked(&c->frames);
     const value result_v = c->stack_bp[decode_operand_at(c->ip)];
 
     c->accr = result_v; // ! IMPORTANT: yield temp result value in accumulator, later read after return to caller.
