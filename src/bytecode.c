@@ -58,7 +58,7 @@ static const char* const bc_opcode_names_v[] = {
 void chunk_del(void *c) {
     auto chunk_self = (chunk*)c;
 
-    if (chunk_self->icv != nullptr) {
+    if (chunk_self->icv != nullptr) {   // ! icv is corrupted, causing a crash in gv free??
         free(chunk_self->icv);
         chunk_self->icv = nullptr;
     }

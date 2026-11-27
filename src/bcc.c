@@ -6,8 +6,8 @@
 
 static constexpr size_t bcc_initial_chunk_cap_v = 24;
 static constexpr size_t bcc_initial_chunk_k_cap_v = 8;
-static constexpr size_t bcc_initial_chunk_ic_cap_v = 2;
-static constexpr size_t bcc_initial_chunk_var_ent_cap_v = 2;
+static constexpr size_t bcc_initial_chunk_ic_cap_v = 4;
+static constexpr size_t bcc_initial_chunk_var_ent_cap_v = 4;
 static constexpr size_t bcc_bc_byte_sz = sizeof(uint8_t);
 static constexpr uint16_t bcc_bc_max_cap_v = 0xffff;
 static constexpr uint16_t bcc_initial_global_cap_v = 8;
@@ -16,9 +16,9 @@ static constexpr uint16_t bcc_max_arity = 255;
 static constexpr uint16_t bcc_max_errors = 3;
 
 static const ic bcc_idle_ic_v = {
-    .shape_ids = {[3] = -1},
-    .recv_ids = {[3] = -1},
-    .obj_offsets = {[3] = -1},
+    .shape_ids = {-1, -1, -1, -1},
+    .recv_ids = {-1, -1, -1, -1},
+    .obj_offsets = {-1, -1, -1, -1},
     .leeway = 1,            // ? idle ICs must gather data upon their initial miss.
     .state = nl_ics_idle,
 };
@@ -150,17 +150,9 @@ uint16_t bcc_start_chunk(bcc_state* bcc) {
         .k_len = 0,
         .icv = calloc(bcc_initial_chunk_ic_cap_v, sizeof(ic)),
         .ic_cap = bcc_initial_chunk_ic_cap_v,
-        .ic_len = 1,
+        .ic_len = 0,
         .regs_n = 0,
         .arity = 0,
-    };
-
-    next_chunk.icv[0] = (ic) {
-        .shape_ids = {[3] = -1},
-        .recv_ids = {[3] = -1},
-        .obj_offsets = {[3] = -1},
-        .leeway = 0,
-        .state = nl_ics_dead
     };
 
     dynbuf_push(&bcc->chunks, &next_chunk);
@@ -190,7 +182,7 @@ void bcc_emit_byte(bcc_state* bcc, uint8_t b) {
     }
 
     if (next_len >= curr_cap) {
-        auto next_bc_buf = realloc(curr_chunk->bc, bcc_bc_byte_sz * next_cap);
+        uint8_t* next_bc_buf = realloc(curr_chunk->bc, bcc_bc_byte_sz * next_cap);
 
         if (!next_bc_buf) {
             NL_PANIC("Failed to reallocate bytecode buffer in bcc here.", __FILE__, __LINE__)
@@ -207,7 +199,11 @@ void bcc_emit_byte(bcc_state* bcc, uint8_t b) {
 uint16_t bcc_emit_inst_nonary(bcc_state* bcc, op o) {
     const uint16_t bc_ipos = ((const chunk*)dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
 
+    // printf("Emit %u: %u\n", bc_ipos, o);
+
     bcc_emit_byte(bcc, (uint8_t) o);
+
+    // printf("bc-ptr: %p\n", ((const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid))->bc);
 
     return bc_ipos;
 }
@@ -215,9 +211,13 @@ uint16_t bcc_emit_inst_nonary(bcc_state* bcc, op o) {
 uint16_t bcc_emit_inst_unary(bcc_state* bcc, op o, uint16_t a0) {
     const uint16_t bc_ipos = ((const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
 
+    // printf("Emit %u: %u   %u\n", bc_ipos, o, a0); // ! debug
+
     bcc_emit_byte(bcc, (uint8_t) o);
     bcc_emit_byte(bcc, (uint8_t) (a0 & 0xff));
     bcc_emit_byte(bcc, (uint8_t) ((a0 & 0xff00) >> 8));
+
+    // printf("bc-ptr: %p\n", ((const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid))->bc);
 
     return bc_ipos;
 }
@@ -225,17 +225,23 @@ uint16_t bcc_emit_inst_unary(bcc_state* bcc, op o, uint16_t a0) {
 uint16_t bcc_emit_inst_binary(bcc_state* bcc, op o, uint16_t a0, uint16_t a1) {
     const uint16_t bc_ipos = ((const chunk*)dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
 
+    // printf("Emit %u: %u   %u, %u\n", bc_ipos, o, a0, a1);
+
     bcc_emit_byte(bcc, (uint8_t) o);
     bcc_emit_byte(bcc, (uint8_t) (a0 & 0xff));
     bcc_emit_byte(bcc, (uint8_t) ((a0 & 0xff00) >> 8));
     bcc_emit_byte(bcc, (uint8_t) (a1 & 0xff));
     bcc_emit_byte(bcc, (uint8_t) ((a1 & 0xff00) >> 8));
 
+    // printf("bc-ptr: %p\n", ((const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid))->bc);
+
     return bc_ipos;
 }
 
 uint16_t bcc_emit_inst_ternary(bcc_state* bcc, op o, uint16_t a0, uint16_t a1, uint16_t a2) {
     const uint16_t bc_ipos = ((const chunk*)dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
+
+    // printf("Emit %u: %u   %u, %u, %u\n", bc_ipos, o, a0, a1, a2);
 
     bcc_emit_byte(bcc, (uint8_t) o);
     bcc_emit_byte(bcc, (uint8_t) (a0 & 0xff));
@@ -244,6 +250,8 @@ uint16_t bcc_emit_inst_ternary(bcc_state* bcc, op o, uint16_t a0, uint16_t a1, u
     bcc_emit_byte(bcc, (uint8_t) ((a1 & 0xff00) >> 8));
     bcc_emit_byte(bcc, (uint8_t) (a2 & 0xff));
     bcc_emit_byte(bcc, (uint8_t) ((a2 & 0xff00) >> 8));
+
+    // printf("bc-ptr: %p\n", ((const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid))->bc);
 
     return bc_ipos;
 }
@@ -270,7 +278,6 @@ void bcc_patch_jump(bcc_state* bcc, uint16_t target_ip, uint16_t dest_ipos) {
     }
 }
 
-[[nodiscard]]
 uint16_t nl_bcc_place_ic(bcc_state* bcc, ic temp_ic) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
     const uint16_t next_ic_len = curr_chunk->ic_len;
@@ -289,7 +296,7 @@ uint16_t nl_bcc_place_ic(bcc_state* bcc, ic temp_ic) {
         }
 
         curr_chunk->icv = next_ic_buf;
-        curr_chunk->code_cap = next_ic_cap;
+        curr_chunk->ic_cap = next_ic_cap;
     }
 
     curr_chunk->icv[next_ic_len] = temp_ic;
@@ -574,25 +581,6 @@ void bcc_record_upval_info(bcc_state* bcc, const syminfo* uv_info) {
     return (void) bcc_push_symbol_to(bcc, *uv_info, 'L');
 }
 
-// ! IMPORTANT: upvalues are pre-recorded per chunk in vinfos as a var_ent for upvalue having `cid = assoc-scope -> assoc-function -> func-chunk-ID` and local-reg "offset"
-// void bcc_save_chunk_var_ent(bcc_state* bcc, var_ent entry) {
-//     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
-
-//     const auto var_entries = (const var_ent*) curr_chunk->vinfo.data;
-//     const uint16_t var_entry_n = curr_chunk->vinfo.n;
-
-//     for (uint16_t var_entry_id = 0; var_entry_id < var_entry_n; var_entry_id++) {
-//         const var_ent* const checked_var_entry = (var_entries + var_entry_id);
-
-//         if (checked_var_entry->cid == entry.cid && checked_var_entry->id == entry.id) {
-//             return;
-//         }
-//     }
-
-//     dynbuf_push(&curr_chunk->vinfo, &entry);
-// }
-
-
 [[nodiscard]]
 bcc_result bcc_emit_invalid(bcc_state* bcc, const ast_node* node, uint16_t flags) {
     return bcc_dud_result_v;
@@ -822,6 +810,13 @@ bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t fla
     const uint16_t lambda_cid = bcc_start_chunk(bcc);
     bcc->curr_cid = lambda_cid;
     bcc->top_reg = 0;
+    nl_bcc_place_ic(bcc, (ic) {
+        .shape_ids = {-1, -1, -1, -1},
+        .recv_ids =  {-1, -1, -1, -1},
+        .obj_offsets =  {-1, -1, -1, -1},
+        .leeway = 0,
+        .state = nl_ics_dead
+    });
 
     bcc_start_scope(bcc, str_from_string(&internal_lambda_name));
 
@@ -872,8 +867,8 @@ bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t fla
 [[nodiscard]]
 bcc_result bcc_emit_expr_new_table(bcc_state* bcc, const ast_node* node, uint16_t flags) {
     const auto new_table_node = &node->data.tbl;
-    const tfield* new_table_entry_it = new_table_node->props.data;
-    const tfield* const new_table_entry_end = new_table_node->props.data + new_table_node->props.n;
+    const tfield* new_table_entry_it = (const tfield*) new_table_node->props.data;
+    const tfield* const new_table_entry_end = new_table_entry_it + new_table_node->props.n;
     const uint16_t new_table_trait_name_line = new_table_node->trait_name.line, new_table_trait_name_col = new_table_node->trait_name.col;
 
     const auto object_temp_reg = bcc->top_reg++;
@@ -884,25 +879,26 @@ bcc_result bcc_emit_expr_new_table(bcc_state* bcc, const ast_node* node, uint16_
         'B'
     );
 
+    uint16_t trait_var_reg;
+
     if (!trait_var_info) {
-        bcc_report_err(bcc, "Expected valid trait name here, did you declare it?", new_table_trait_name_line, new_table_trait_name_col);
-
-        return bcc_dud_result_v;
+        trait_var_reg = bcc->top_reg++;
+        bcc_emit_inst_unary(bcc, nl_op_store_nil, trait_var_reg);
+    } else {
+        trait_var_reg = bcc_normalize_to_local_reg(bcc, (bcc_result) {
+            .n = trait_var_info->n,
+            .cid = trait_var_info->cid,
+            .flags = flags,
+            .domain = trait_var_info->tag,
+            .with_extra = false
+        });
     }
-
-    const uint16_t trait_var_reg = bcc_normalize_to_local_reg(bcc, (bcc_result) {
-        .n = trait_var_info->n,
-        .cid = trait_var_info->cid,
-        .flags = flags,
-        .domain = trait_var_info->tag,
-        .with_extra = false
-    });
 
     bcc_emit_inst_ternary(bcc, nl_op_inst_trait, object_temp_reg, trait_var_reg, new_table_node->props.n);  // todo: add u16::MAX check for initial properties
 
     const auto prop_expr_flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
 
-    for (; new_table_entry_it < new_table_entry_end; new_table_entry_it++) {
+    for (; new_table_entry_it != new_table_entry_end; new_table_entry_it++) {
         const auto prop_key_id = bcc_record_prop_key_imm(bcc, tk_get_lexeme(&new_table_entry_it->name, bcc->source));
 
         const auto prop_init_result = bcc_emit_next(bcc, new_table_entry_it->initial, prop_expr_flags);
@@ -1854,6 +1850,13 @@ program nl_bcc_compile_tu(bcc_state* bcc, const ast_unit* tu) {
 
     const auto top_level_main_chunk_id = bcc_start_chunk(bcc);
     bcc->curr_cid = top_level_main_chunk_id;
+    nl_bcc_place_ic(bcc, (ic) {
+        .shape_ids = {[3] = -1},
+        .recv_ids = {[3] = -1},
+        .obj_offsets = {[3] = -1},
+        .leeway = 0,
+        .state = nl_ics_dead
+    });
 
     bcc_result last_item_result = bcc_dud_result_v;
     const auto baseline_flags = bcc_flag_set_n(nl_bcc_cf_ok, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1);
