@@ -15,6 +15,14 @@ static constexpr uint16_t bcc_initial_natives_cap_v = 8;
 static constexpr uint16_t bcc_max_arity = 255;
 static constexpr uint16_t bcc_max_errors = 3;
 
+static const ic bcc_idle_ic_v = {
+    .shape_ids = {[3] = -1},
+    .recv_ids = {[3] = -1},
+    .obj_offsets = {[3] = -1},
+    .leeway = 1,            // ? idle ICs must gather data upon their initial miss.
+    .state = nl_ics_idle,
+};
+
 
 
 [[nodiscard]]
@@ -142,9 +150,17 @@ uint16_t bcc_start_chunk(bcc_state* bcc) {
         .k_len = 0,
         .icv = calloc(bcc_initial_chunk_ic_cap_v, sizeof(ic)),
         .ic_cap = bcc_initial_chunk_ic_cap_v,
-        .ic_len = 0,
+        .ic_len = 1,
         .regs_n = 0,
         .arity = 0,
+    };
+
+    next_chunk.icv[0] = (ic) {
+        .shape_ids = {[3] = -1},
+        .recv_ids = {[3] = -1},
+        .obj_offsets = {[3] = -1},
+        .leeway = 0,
+        .state = nl_ics_dead
     };
 
     dynbuf_push(&bcc->chunks, &next_chunk);
@@ -893,7 +909,7 @@ bcc_result bcc_emit_expr_new_table(bcc_state* bcc, const ast_node* node, uint16_
         .with_extra = false
     });
 
-    bcc_emit_inst_binary(bcc, nl_op_inst_trait, object_temp_reg, trait_var_reg);
+    bcc_emit_inst_ternary(bcc, nl_op_inst_trait, object_temp_reg, trait_var_reg, new_table_node->props.n);  // todo: add u16::MAX check for initial properties
 
     const auto prop_expr_flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
 
@@ -953,12 +969,7 @@ bcc_result bcc_emit_expr_access(bcc_state* bcc, const ast_node* node, uint16_t f
 
     for (uint16_t prop_access_pos = 0; prop_access_pos < prop_access_last_pos; prop_access_pos++) {
         const auto next_prop_access = &prop_accesses[prop_access_pos];
-        const auto prop_site_ic_id = nl_bcc_place_ic(bcc, (ic) {
-            .shape_ids = {[3] = -1},
-            .recv_ids = {[3] = -1},
-            .obj_offsets = {[3] = -1},
-            .state = nl_ics_idle,
-        });
+        const auto prop_site_ic_id = nl_bcc_place_ic(bcc, bcc_idle_ic_v);
 
         if (next_prop_access->is_named) {
             const auto prop_key_imm = bcc_record_prop_key_imm(bcc, tk_get_lexeme(&next_prop_access->data.name_tk, bcc->source));
@@ -974,7 +985,6 @@ bcc_result bcc_emit_expr_access(bcc_state* bcc, const ast_node* node, uint16_t f
 
             const uint16_t prop_comp_key_reg = bcc_normalize_to_local_reg(bcc, prop_comp_key_result);
 
-            bcc_emit_inst_unary(bcc, nl_op_use_ic, prop_site_ic_id);
             bcc_emit_inst_ternary(bcc, nl_op_get_item, temp_item_reg, object_temp_reg, prop_comp_key_reg);
 
             bcc->top_reg = temp_item_reg + 1;
@@ -1301,10 +1311,9 @@ bcc_result bcc_emit_expr_assign(bcc_state* bcc, const ast_node* node, uint16_t f
         }
     } else if (dest_result.with_extra) {
         if (dest_result.domain == nl_bcc_sym_prop_key_imm) {
-            // ! Handle assignment to named property here... FIXME??
+            bcc_emit_inst_unary(bcc, nl_op_use_ic, nl_bcc_place_ic(bcc, bcc_idle_ic_v));
             bcc_emit_inst_ternary(bcc, nl_op_set_prop, dest_result.extra_dest_reg, dest_result.n, src_reg);
         } else if (dest_result.domain == nl_bcc_sym_local_r) {
-            // ! Handle assignment to computed property here... FIXME??
             bcc_emit_inst_ternary(bcc, nl_op_set_item, dest_result.extra_dest_reg, dest_result.n, src_reg);
         } else {
             bcc_report_err(bcc, "Invalid assignment destination found around here.", bcc->line, bcc->col);
