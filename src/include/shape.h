@@ -17,16 +17,7 @@ typedef struct nl_shape_ent_t {
     uint8_t meta;          // holds property flags
 } shape_ent;
 
-typedef struct nl_shape_link_t {
-    int32_t key_sid;
-    int32_t shape_id;
-    bool is_rev;        // for property deletion transitions
-} shape_link;
-
 typedef struct nl_shape_t {
-    dynbuf entries;     // stores `shape_ent[]`
-    void* proto;        // stores pointer to trait prototype object
-    shape_link* links;  // transition edges to/from parent or child shapes, allowing shape reuse
-    uint32_t link_cap;  // link capacity
-    uint32_t link_n;    // link count
+    dynbuf entries;         // stores `shape_ent[]`
+    int32_t id;             // ID into pool manager of all shapes
 } shape;
