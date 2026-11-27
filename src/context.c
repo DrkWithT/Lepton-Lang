@@ -24,6 +24,55 @@ constexpr uint16_t nl_ic_leeways[] = {
     [nl_ics_dead] = 40000
 };
 
+
+
+[[nodiscard]]
+NL_CXX_INLINE int32_t context_lookup_ic(ic* cache, int32_t reciever_shape_id) {
+    const auto curr_ic_entry_window = nl_ic_entry_windows[cache->state];
+
+    for (int32_t ic_entry_pos = 0; ic_entry_pos < curr_ic_entry_window; ic_entry_pos++) {
+        if (cache->shape_ids[ic_entry_pos] == reciever_shape_id) {
+            return cache->obj_offsets[ic_entry_pos];
+        }
+    }
+
+    // ! Here, the IC has missed too much predictions. Update its state.
+    if (cache->leeway-- < 1) {
+        switch (cache->state) {
+            case nl_ics_idle: {
+                cache->state = nl_ics_mono;
+                cache->leeway = nl_ic_leeways[nl_ics_mono];
+            } break;
+            case nl_ics_mono: {
+                cache->state = nl_ics_poly;
+                cache->leeway = nl_ic_leeways[nl_ics_poly];
+            } break;
+            default: {
+                cache->state = nl_ics_dead;
+                cache->leeway = nl_ic_leeways[nl_ics_dead];
+            } break;
+        }
+    }
+
+    return nl_ic_dud_offset;
+}
+
+[[nodiscard]]
+NL_CXX_INLINE const shape_ent* context_lookup_shape_slot(const shape* target_shape, uint16_t key_id) {
+    const shape_ent* const shape_entries = target_shape->entries.data;
+    const auto shape_entry_n = target_shape->entries.n;
+
+    for (uint32_t entry_pos = 0; entry_pos < shape_entry_n; entry_pos++) {
+        if (shape_entries[entry_pos].key_sid == key_id) {
+            return &shape_entries[entry_pos];
+        }
+    }
+
+    return nullptr;
+}
+
+
+
 [[nodiscard]]
 context context_new(program pg, size_t shape_capacity) {
     const auto vm_initial_chunk = (chunk*) dynbuf_get_mut(&pg.chunks, pg.entry_cid);
@@ -57,6 +106,7 @@ context context_new(program pg, size_t shape_capacity) {
             .caller_icaches = nullptr,
             .caller_stack_base = vm_stack_buf,
             .closure_id = -1,
+            .self_obj_id = -1,
             .cid = pg.entry_cid
         };
 
@@ -92,6 +142,8 @@ void context_del(context* c) {
     ent_pool_del(&c->pool_s);
     ent_pool_del(&c->pool_o);
     ent_pool_del(&c->pool_c);
+
+    shm_del(&c->shapes);
 
     dynbuf_del(&c->chunks);
     dynbuf_del(&c->frames);
@@ -172,12 +224,12 @@ value context_try_closurify(context* c, uint16_t chunk_id) {
     };
 }
 
-bool context_try_invoke(context* c, value callee, uint8_t arity) {
+bool context_try_invoke(context* c, value callee, int32_t maybe_self_id) {
     if (callee.tag != nl_vtag_closure) {
         return false;
     }
 
-    const chunk* const caller_chunk = dynbuf_get(&c->chunks, ((const context_frame*) dynbuf_last(&c->frames))->cid);
+    const chunk* const caller_chunk = dynbuf_get(&c->chunks, ((const context_frame*) dynbuf_last_unchecked(&c->frames))->cid);
     closure* target_closure = ent_pool_get_mut_unchecked(&c->pool_c, callee.n).p;
 
     {
@@ -189,6 +241,8 @@ bool context_try_invoke(context* c, value callee, uint8_t arity) {
             .caller_icaches = c->icp,
             .caller_stack_base = c->stack_bp,
             .closure_id = callee.n,
+            // ! IMPORTANT: Set dud ID for non-methods only.
+            .self_obj_id = maybe_self_id,
             .cid = target_closure->cid
         };
 
@@ -231,6 +285,40 @@ entity_handle_mut context_create_with_trait(context* c, value trait_v, uint16_t 
     };
 
     return ent_pool_add(&c->pool_o, &temp_object);
+}
+
+[[nodiscard]]
+bool context_try_invoke_method(context* c, value caller_obj, int16_t prop_method_id) {
+    if (caller_obj.tag != nl_vtag_obj) {
+        return false;
+    }
+
+    ic* const buddy_ic = &c->icp[c->curr_ic_id];
+    metatable* const target_object = ent_pool_get_mut_unchecked(&c->pool_o, caller_obj.n).p;
+    const auto object_id = caller_obj.n;
+    const auto object_shape_id = target_object->shape_id;
+    const auto ic_result_offset = context_lookup_ic(buddy_ic, object_shape_id);
+
+    // ! IC Hits, so we're in "La La Land". Just use the cached offset according to the object's layout vs. a full shape lookup.
+    if (ic_result_offset != nl_ic_dud_offset) {
+        return context_try_invoke(c, target_object->pvals[ic_result_offset], object_id);
+    }
+
+    // ! Otherwise, we need to update the now invalidated IC with this fresh miss as entry 1. This LRU behavior MAY avoid future unlucky property lookups.
+    const shape* const target_shape = shm_get_shape_unchecked(&c->shapes, object_shape_id);
+    const auto prop_entry = context_lookup_shape_slot(target_shape, prop_method_id);
+
+    if (!prop_entry) {
+        return false;
+    }
+
+    const auto prop_offset = prop_entry->offset;
+
+    buddy_ic->shape_ids[0] = object_shape_id;
+    buddy_ic->obj_offsets[0] = prop_offset;
+    buddy_ic->recv_ids[0] = object_id;
+
+    return context_try_invoke(c, target_object->pvals[prop_offset], object_id);
 }
 
 void context_seal_object(context* c, value object_v) {
@@ -297,51 +385,6 @@ void context_init_property(context* c, value object_v, uint16_t key_id, value in
         }
     );
     target_object->pvals[target_object->prop_n++] = initial_v;
-}
-
-[[nodiscard]]
-NL_CXX_INLINE int32_t context_lookup_ic(ic* cache, int32_t reciever_shape_id) {
-    const auto curr_ic_entry_window = nl_ic_entry_windows[cache->state];
-
-    for (int32_t ic_entry_pos = 0; ic_entry_pos < curr_ic_entry_window; ic_entry_pos++) {
-        if (cache->shape_ids[ic_entry_pos] == reciever_shape_id) {
-            return cache->obj_offsets[ic_entry_pos];
-        }
-    }
-
-    // ! Here, the IC has missed too much predictions. Update its state.
-    if (cache->leeway-- < 1) {
-        switch (cache->state) {
-            case nl_ics_idle: {
-                cache->state = nl_ics_mono;
-                cache->leeway = nl_ic_leeways[cache->state];
-            } break;
-            case nl_ics_mono: {
-                cache->state = nl_ics_poly;
-                cache->leeway = nl_ic_leeways[cache->state];
-            } break;
-            default: {
-                cache->state = nl_ics_dead;
-                cache->leeway = nl_ic_leeways[cache->state];
-            } break;
-        }
-    }
-
-    return nl_ic_dud_offset;
-}
-
-[[nodiscard]]
-NL_CXX_INLINE const shape_ent* context_lookup_shape_slot(const shape* target_shape, uint16_t key_id) {
-    const shape_ent* const shape_entries = target_shape->entries.data;
-    const auto shape_entry_n = target_shape->entries.n;
-
-    for (uint32_t entry_pos = 0; entry_pos < shape_entry_n; entry_pos++) {
-        if (shape_entries[entry_pos].key_sid == key_id) {
-            return &shape_entries[entry_pos];
-        }
-    }
-
-    return nullptr;
 }
 
 [[nodiscard]]
@@ -478,7 +521,7 @@ bool context_test_equality(const context* c, value lhs, value rhs) {
 
 [[nodiscard]]
 const value* context_get_upvalue(const context* c, uint16_t uv_cid, uint16_t uv_local_reg) {
-    const closure* const callee = ent_pool_get_unchecked(&c->pool_c, ((const context_frame*) dynbuf_last(&c->frames))->closure_id).p;
+    const closure* const callee = ent_pool_get_unchecked(&c->pool_c, ((const context_frame*) dynbuf_last_unchecked(&c->frames))->closure_id).p;
 
     const upvalue* callee_upvalue_it = callee->upvals;
     const upvalue* const callee_upvalue_end = callee->upvals + callee->upvals_cap;
@@ -494,7 +537,7 @@ const value* context_get_upvalue(const context* c, uint16_t uv_cid, uint16_t uv_
 
 [[nodiscard]]
 bool context_set_upvalue(context* c, uint16_t uv_cid, uint16_t uv_local_reg, value v) {
-    closure* const callee = ent_pool_get_mut(&c->pool_c, ((const context_frame*) dynbuf_last(&c->frames))->closure_id).p;
+    closure* const callee = ent_pool_get_mut(&c->pool_c, ((const context_frame*) dynbuf_last_unchecked(&c->frames))->closure_id).p;
 
     upvalue* callee_upvalue_it = callee->upvals;
     upvalue* const callee_upvalue_end = callee->upvals + callee->upvals_cap;

@@ -21,6 +21,7 @@ typedef struct nl_context_frame_t {
     ic* caller_icaches;
     value* caller_stack_base;
     int32_t closure_id;
+    int32_t self_obj_id;
     uint16_t cid;
 } context_frame;
 
@@ -63,7 +64,9 @@ void context_del(context* c);
 [[nodiscard]]
 value context_try_closurify(context* c, uint16_t chunk_id);
 
-bool context_try_invoke(context* c, value callee, uint8_t arity);
+bool context_try_invoke(context* c, value callee, int32_t maybe_self_id);
+
+bool context_try_invoke_method(context* c, value caller_obj, int16_t prop_method_id);
 
 [[nodiscard]]
 entity_handle_mut context_create_with_trait(context* c, value trait_v, uint16_t initial_named_props_n);
