@@ -16,7 +16,8 @@
                 "CMAKE_COMPILE_WARNING_AS_ERROR": "ON",
                 "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/build",
                 "NEU_INCLUDES": "${sourceDir}/src/include",
-                "NEU_SRCS": "${sourceDir}/src"
+                "NEU_SRCS": "${sourceDir}/src",
+                "NEU_SANITIZER_OPTS": "ON"
             }
         },
         {
