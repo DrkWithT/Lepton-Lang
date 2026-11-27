@@ -2,6 +2,7 @@
 
 #include "bytecode.h"
 #include "closures.h"
+#include "shape_manager.h"
 
 
 
@@ -27,11 +28,14 @@ typedef struct nl_context_frame_t {
  ### ABOUT
 
  This data type encapsulates the entire runtime state of the Neu language. It is meant to hold VM state for managing memory, execution location, call frames, etc. Also, native functions which are added to the interpreter MUST take in a pointer to this state.
+
  */
+// TODO: Add shape_manager into context before implementing object handling methods.
 typedef struct nl_context_t {
     ent_pool pool_s;    // interned strings
     ent_pool pool_o;    // objects (metatables)
     ent_pool pool_c;    // closures
+    shm shapes;         // shape manager
     dynbuf chunks;
     dynbuf frames;
     value* stack;       // all register slots
@@ -48,10 +52,11 @@ typedef struct nl_context_t {
     uint16_t gv_len;    // global value count (determined at bytecode compilation)
     uint16_t gv_cap;    // global value capacity (determined at bytecode compilation)
     uint16_t flags;
+    uint16_t curr_ic_id;
 } context;
 
 [[nodiscard]]
-context context_new(program pg);
+context context_new(program pg, size_t shape_capacity);
 
 void context_del(context* c);
 
@@ -59,6 +64,25 @@ void context_del(context* c);
 value context_try_closurify(context* c, uint16_t chunk_id);
 
 bool context_try_invoke(context* c, value callee, uint8_t arity);
+
+[[nodiscard]]
+entity_handle_mut context_create_with_trait(context* c, value trait_v, uint16_t initial_named_props_n);
+
+void context_seal_object(context* c, value object_v);
+
+void context_init_property(context* c, value object_v, uint16_t key_id, value initial_v);
+
+[[nodiscard]]
+bool context_set_property(context* c, value object_v, uint16_t key_id, value v);
+
+[[nodiscard]]
+value* context_get_property(context* c, value object_v, uint16_t key_id);
+
+[[nodiscard]]
+bool context_set_computed_property(context* c, value object_v, value key_v, value v);
+
+[[nodiscard]]
+value* context_get_computed_property(context* c, value object_v, value key_v);
 
 [[nodiscard]]
 bool context_convert_to_bool(const context* c, value v);
