@@ -730,17 +730,6 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
                 .with_extra = false
             };
         }
-        case nl_tk_kw_super: {
-            bcc_emit_inst_unary(bcc, nl_op_ref_super, bcc->top_reg);
-
-            return (bcc_result) {
-                .n = bcc->top_reg++,
-                .flags = temp_rvalue_flags,
-                .cid = bcc->curr_cid,
-                .domain = nl_bcc_sym_local_r,
-                .with_extra = false
-            };
-        }
         case nl_tk_identifier: {
             return bcc_preemit_identifier(bcc, &temp_lexeme, flags);
         }
@@ -1083,7 +1072,7 @@ bcc_result bcc_emit_expr_call(bcc_state* bcc, const ast_node* node, uint16_t fla
     uint16_t accr_spill_reg;
 
     if (callee_emit_result.domain == nl_bcc_sym_local_r) {
-        bcc_emit_inst_binary(bcc, nl_op_call, callee_emit_result.n, call_argc);
+        bcc_emit_inst_unary(bcc, nl_op_call, callee_emit_result.n);
         bcc_emit_inst_unary(bcc, nl_op_ld_accr, bcc->top_reg);
 
         accr_spill_reg = bcc->top_reg;
@@ -1091,12 +1080,21 @@ bcc_result bcc_emit_expr_call(bcc_state* bcc, const ast_node* node, uint16_t fla
         bcc_update_curr_rc(bcc, bcc->top_reg++);
     } else if (callee_emit_result.domain == nl_bcc_sym_foreign_local) {
         bcc_emit_inst_ternary(bcc, nl_op_ld_upval, bcc->top_reg, callee_emit_result.n, callee_emit_result.cid);
-        bcc_emit_inst_binary(bcc, nl_op_call, bcc->top_reg++, call_argc);
+        bcc_emit_inst_unary(bcc, nl_op_call, bcc->top_reg++);
 
         accr_spill_reg = bcc->top_reg;
 
         bcc_emit_inst_unary(bcc, nl_op_ld_accr, accr_spill_reg);
         bcc_update_curr_rc(bcc, bcc->top_reg);
+    } else if (callee_emit_result.with_extra) {
+        if (callee_emit_result.domain == nl_bcc_sym_prop_key_imm) {
+            bcc_emit_inst_unary(bcc, nl_op_use_ic, nl_bcc_place_ic(bcc, bcc_idle_ic_v));
+            bcc_emit_inst_binary(bcc, nl_op_call_method, callee_emit_result.extra_dest_reg, callee_emit_result.n);
+        } else {
+            bcc_report_err(bcc, "Invalid callee location found around here.", bcc->line, bcc->col);
+
+            return bcc_dud_result_v;
+        }
     } else {
         bcc_report_err(bcc, "Unresolvable location found for call result around here. This may be a bug.", bcc->line, bcc->col);
 
@@ -1310,13 +1308,19 @@ bcc_result bcc_emit_expr_assign(bcc_state* bcc, const ast_node* node, uint16_t f
             return bcc_dud_result_v;
         }
     } else if (dest_result.with_extra) {
-        if (dest_result.domain == nl_bcc_sym_prop_key_imm) {
-            bcc_emit_inst_unary(bcc, nl_op_use_ic, nl_bcc_place_ic(bcc, bcc_idle_ic_v));
-            bcc_emit_inst_ternary(bcc, nl_op_set_prop, dest_result.extra_dest_reg, dest_result.n, src_reg);
-        } else if (dest_result.domain == nl_bcc_sym_local_r) {
-            bcc_emit_inst_ternary(bcc, nl_op_set_item, dest_result.extra_dest_reg, dest_result.n, src_reg);
+        if (assign_runtime_op == nl_op_mov_rr) {
+            if (dest_result.domain == nl_bcc_sym_prop_key_imm) {
+                bcc_emit_inst_unary(bcc, nl_op_use_ic, nl_bcc_place_ic(bcc, bcc_idle_ic_v));
+                bcc_emit_inst_ternary(bcc, nl_op_set_prop, dest_result.extra_dest_reg, dest_result.n, src_reg);
+            } else if (dest_result.domain == nl_bcc_sym_local_r) {
+                bcc_emit_inst_ternary(bcc, nl_op_set_item, dest_result.extra_dest_reg, dest_result.n, src_reg);
+            } else {
+                bcc_report_err(bcc, "Invalid property assignment destination found around here.", bcc->line, bcc->col);
+
+                return bcc_dud_result_v;
+            }
         } else {
-            bcc_report_err(bcc, "Invalid assignment destination found around here.", bcc->line, bcc->col);
+            bcc_report_err(bcc, "Unsupported: Property compound assignment destination found around here.", bcc->line, bcc->col); // todo: implement emissions of in-place ModMDAS opcodes...
 
             return bcc_dud_result_v;
         }

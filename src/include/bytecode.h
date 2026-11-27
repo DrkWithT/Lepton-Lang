@@ -36,7 +36,6 @@ typedef enum nl_op_t : uint8_t {
     nl_op_set_item,     // (for computed props) set_item dest comp-key-reg src
     nl_op_get_item,     // (for computed props) get_item dest src-obj-reg comp-key-reg
     nl_op_ref_self,     // ref_self dest
-    nl_op_ref_super,    // ref_super dest
     nl_op_ld_accr,      // load_accr dest
     nl_op_test_nil,     // test_nil dest
     nl_op_neg_num,      // numeric_neg dest
@@ -57,8 +56,9 @@ typedef enum nl_op_t : uint8_t {
     nl_op_jmp_else,     // jmp_else src pc
     nl_op_jmp,          // jmp pc
     nl_op_mk_closure,   // mk_closure dest <chunk-ID>
-    nl_op_call,         // call func-reg argc -> `accr`
+    nl_op_call,         // call func-reg -> `accr`
     nl_op_call_n,       // call_native native-id-imm argc -> `accr`
+    nl_op_call_method,  // call_method this-reg, func-name-id-imm
     nl_op_ret,          // ret src
 } op;
 

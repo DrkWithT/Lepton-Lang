@@ -29,7 +29,6 @@ static const char* const bc_opcode_names_v[] = {
     "set_item",
     "get_item",
     "ref_self",
-    "ref_super",
     "ld_accr",
     "test_nil",
     "neg_num",
@@ -52,6 +51,7 @@ static const char* const bc_opcode_names_v[] = {
     "mk_closure",
     "call",
     "call_n",
+    "call_method",
     "ret",
 };
 
@@ -219,7 +219,6 @@ void chunk_output(FILE* os, const chunk* c) {
             case nl_op_set_item: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
             case nl_op_get_item: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
             case nl_op_ref_self: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
-            case nl_op_ref_super: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
             case nl_op_ld_accr: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
             case nl_op_test_nil: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
             case nl_op_neg_num: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
@@ -240,8 +239,9 @@ void chunk_output(FILE* os, const chunk* c) {
             case nl_op_jmp_else: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
             case nl_op_jmp: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
             case nl_op_mk_closure: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_call: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
+            case nl_op_call: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
             case nl_op_call_n: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
+            case nl_op_call_method: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
             case nl_op_ret: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
             default: fprintf(os, "(unknown op)"); return;
         }
