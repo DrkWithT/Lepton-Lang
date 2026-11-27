@@ -2,21 +2,47 @@
 #include "strs.h"
 #include "context.h"
 #include "closures.h"
+#include "shape.h"
+#include "table.h"
 
 
 
 constexpr size_t nl_default_stack_size = 8192;
 constexpr size_t nl_default_arg_regs_n = 255;
 constexpr size_t nl_default_max_scope_depth = 64;
-
-
+constexpr int32_t nl_ic_dud_offset = -1;
+constexpr int32_t nl_ic_entry_windows[] = {
+    [nl_ics_idle] = 0,
+    [nl_ics_mono] = 1,
+    [nl_ics_poly] = 4,
+    [nl_ics_dead] = 0,
+};
+constexpr uint16_t nl_ic_leeways[] = {
+    [nl_ics_idle] = 1,
+    [nl_ics_mono] = 1000,
+    [nl_ics_poly] = 2000,
+    [nl_ics_dead] = 40000
+};
 
 [[nodiscard]]
-context context_new(program pg) {
+context context_new(program pg, size_t shape_capacity) {
     const auto vm_initial_chunk = (chunk*) dynbuf_get_mut(&pg.chunks, pg.entry_cid);
     const uint8_t* vm_initial_ip = vm_initial_chunk->bc;
     const value* vm_initial_kp = vm_initial_chunk->kd;
     auto vm_initial_icp = vm_initial_chunk->icv;
+
+    auto shapes = shm_new(shape_capacity, (uint16_t[]) { 3, 4 });
+
+    {
+        shape base_shape = {
+            .entries = dynbuf_new(sizeof(shape_ent), 4, nullptr),
+            .id = 0
+        };
+
+        if (shm_add_shape(&shapes, &base_shape) == -1) {
+            NL_PANIC("Failed to intern blank object layout. This may be a bug", __FILE__, __LINE__)
+        }
+    }
 
     NL_ALLOC_N(nl_default_stack_size, value, vm_stack_buf, __FILE__, __LINE__)
     NL_ALLOC_N(nl_default_arg_regs_n, value, vm_arg_regs_buf, __FILE__, __LINE__)
@@ -41,6 +67,7 @@ context context_new(program pg) {
         .pool_s = pg.pool_s,
         .pool_o = pg.pool_o,
         .pool_c = pg.pool_c,
+        .shapes = shapes,
         .chunks = pg.chunks,
         .frames = frame_stack,
         .stack = vm_stack_buf,
@@ -56,7 +83,8 @@ context context_new(program pg) {
         .stack_sz = nl_default_stack_size,
         .gv_cap = pg.gv_cap,
         .gv_len = pg.gv_len,
-        .flags = nl_ctxf_pending
+        .flags = nl_ctxf_pending,
+        .curr_ic_id = 0
     };
 }
 
@@ -176,6 +204,225 @@ bool context_try_invoke(context* c, value callee, uint8_t arity) {
     c->stack_bp = c->stack_bp + caller_chunk->regs_n;
 
     return true;
+}
+
+[[nodiscard]]
+entity_handle_mut context_create_with_trait(context* c, value trait_v, uint16_t initial_named_props_n) {
+    entity_handle_mut created_object_handle = { .p = nullptr, .id = -1 };
+
+    auto trait_object_p = ent_pool_get_mut(&c->pool_o,
+        (trait_v.tag == nl_vtag_obj)
+            ? trait_v.n
+            : -1
+    );
+
+    NL_ALLOC_N(initial_named_props_n, value, temp_pvals, __FILE__, __LINE__)
+    NL_ALLOC_N(4, value, temp_ivals, __FILE__, __LINE__)
+
+    metatable temp_object = {
+        .pvals = temp_pvals,
+        .ivals = temp_ivals,
+        .shape_id = 0,
+        .proto_obj_id = trait_object_p.id,
+        .prop_n = 0,
+        .prop_cap = initial_named_props_n,
+        .item_n = 0,
+        .item_cap = 4
+    };
+
+    return ent_pool_add(&c->pool_o, &temp_object);
+}
+
+void context_seal_object(context* c, value object_v) {
+    // ! BCC only emits sealing of properties for objects via `bcc_emit_new_table()`, so this unchecked lookup is sound.
+    metatable* const target_object = ent_pool_get_mut_unchecked(&c->pool_o, object_v.n).p;
+    shape* const target_object_shape = shm_get_shape_mut(&c->shapes, target_object->shape_id);
+
+    shape_ent* const shape_entries = target_object_shape->entries.data;
+    const uint16_t shape_entry_n = target_object_shape->entries.n;
+
+    for (uint16_t prop_offset = 0; prop_offset < shape_entry_n; prop_offset++) {
+        shape_entries[prop_offset].meta &= (uint8_t) (~nl_prop_may_del);
+    }
+}
+
+void context_init_property(context* c, value object_v, uint16_t key_id, value initial_v) {
+    // ! BCC only emits the opcode using this method in freshly created object expressions, so an unchecked lookup is sound.
+    metatable* const target_object = ent_pool_get_mut_unchecked(&c->pool_o, object_v.n).p;
+
+    {
+        const shape_transitions* target_shape_transitions_list = shm_get_shape_transits(&c->shapes, target_object->shape_id);
+        const auto target_transition_n = target_shape_transitions_list->entries_n;
+        
+        for (uint16_t transit_pos = 0; transit_pos < target_transition_n; transit_pos++) {
+            if (target_shape_transitions_list->keys[transit_pos] == key_id) {
+                // ! Shape transitions always start from blank {}, and each new transition in additive order is placed for each new property. Also, the number of properties added in such an order is already known to BCC. We only need to update the next property slot for this object.
+                target_object->shape_id = target_shape_transitions_list->dest_ids[transit_pos];
+                target_object->pvals[target_object->prop_n++] = initial_v;
+
+                return;
+            }
+        }
+    }
+
+    shape* const target_object_shape = shm_get_shape_mut_unchecked(&c->shapes, target_object->shape_id);
+    const auto duped_object_shape_next_pos = target_object_shape->entries.n;
+    const auto duped_object_shape_cap = (duped_object_shape_next_pos > 0) ? 2 * duped_object_shape_next_pos : duped_object_shape_next_pos + 1;
+
+    NL_ALLOC_N(duped_object_shape_cap, shape_ent, duped_shape_entries_raw, __FILE__, __LINE__)
+    memcpy(duped_shape_entries_raw, target_object_shape->entries.data, duped_object_shape_next_pos * sizeof(shape_ent));
+
+    dynbuf duped_shape_entries = {
+        .data = duped_shape_entries_raw,
+        .del_fn = nullptr,
+        .item_size = sizeof(shape_ent),
+        .cap = duped_object_shape_cap,
+        .n = duped_object_shape_next_pos + 1
+    };
+
+    {
+        shape_ent incoming_prop = {
+            .key_sid = key_id,
+            .offset = duped_object_shape_next_pos,
+            .meta = nl_prop_default
+        };
+
+        dynbuf_push(&duped_shape_entries, &incoming_prop);
+    }
+
+    target_object->shape_id = shm_add_shape(&c->shapes, 
+        &(shape) {
+            .entries = duped_shape_entries,
+            .id = 0
+        }
+    );
+    target_object->pvals[target_object->prop_n++] = initial_v;
+}
+
+[[nodiscard]]
+NL_CXX_INLINE int32_t context_lookup_ic(ic* cache, int32_t reciever_shape_id) {
+    const auto curr_ic_entry_window = nl_ic_entry_windows[cache->state];
+
+    for (int32_t ic_entry_pos = 0; ic_entry_pos < curr_ic_entry_window; ic_entry_pos++) {
+        if (cache->shape_ids[ic_entry_pos] == reciever_shape_id) {
+            return cache->obj_offsets[ic_entry_pos];
+        }
+    }
+
+    // ! Here, the IC has missed too much predictions. Update its state.
+    if (cache->leeway-- < 1) {
+        switch (cache->state) {
+            case nl_ics_idle: {
+                cache->state = nl_ics_mono;
+                cache->leeway = nl_ic_leeways[cache->state];
+            } break;
+            case nl_ics_mono: {
+                cache->state = nl_ics_poly;
+                cache->leeway = nl_ic_leeways[cache->state];
+            } break;
+            default: {
+                cache->state = nl_ics_dead;
+                cache->leeway = nl_ic_leeways[cache->state];
+            } break;
+        }
+    }
+
+    return nl_ic_dud_offset;
+}
+
+[[nodiscard]]
+NL_CXX_INLINE const shape_ent* context_lookup_shape_slot(const shape* target_shape, uint16_t key_id) {
+    const shape_ent* const shape_entries = target_shape->entries.data;
+    const auto shape_entry_n = target_shape->entries.n;
+
+    for (uint32_t entry_pos = 0; entry_pos < shape_entry_n; entry_pos++) {
+        if (shape_entries[entry_pos].key_sid == key_id) {
+            return &shape_entries[entry_pos];
+        }
+    }
+
+    return nullptr;
+}
+
+[[nodiscard]]
+bool context_set_property(context* c, value object_v, uint16_t key_id, value v) {
+    if (object_v.tag != nl_vtag_obj) {
+        return false;
+    }
+
+    ic* const buddy_ic = &c->icp[c->curr_ic_id];
+    metatable* const target_object = ent_pool_get_mut_unchecked(&c->pool_o, object_v.n).p;
+    const auto object_id = object_v.n;
+    const auto object_shape_id = target_object->shape_id;
+    const auto ic_result_offset = context_lookup_ic(buddy_ic, object_shape_id);
+
+    // ! IC Hits, so we're in "La La Land". Just use the cached offset according to the object's layout vs. a full shape lookup.
+    if (ic_result_offset != nl_ic_dud_offset) {
+        target_object->pvals[ic_result_offset] = v;
+
+        return true;
+    }
+
+    // ! Otherwise, we need to update the now invalidated IC with this fresh miss as entry 1. This LRU behavior MAY avoid future unlucky property lookups.
+    const shape* const target_shape = shm_get_shape_unchecked(&c->shapes, object_shape_id);
+    const auto prop_entry = context_lookup_shape_slot(target_shape, key_id);
+
+    if (!prop_entry) {
+        return false;
+    }
+
+    const auto prop_offset = prop_entry->offset;
+
+    target_object->pvals[prop_offset] = v;
+    buddy_ic->shape_ids[0] = object_shape_id;
+    buddy_ic->obj_offsets[0] = prop_offset;
+    buddy_ic->recv_ids[0] = object_id;
+
+    return true;
+}
+
+[[nodiscard]]
+value* context_get_property(context* c, value object_v, uint16_t key_id) {
+    if (object_v.tag != nl_vtag_obj) {
+        return nullptr;
+    }
+
+    ic* const buddy_ic = &c->icp[c->curr_ic_id];
+    metatable* const target_object = ent_pool_get_mut_unchecked(&c->pool_o, object_v.n).p;
+    const auto object_id = object_v.n;
+    const auto object_shape_id = target_object->shape_id;
+    const auto ic_result_offset = context_lookup_ic(buddy_ic, object_shape_id);
+
+    // ! IC Hits, so we're in "La La Land". Just use the cached offset according to the object's layout vs. a full shape lookup.
+    if (ic_result_offset != nl_ic_dud_offset) {
+        return &target_object->pvals[ic_result_offset];
+    }
+
+    // ! Otherwise, we need to update the now invalidated IC with this fresh miss as entry 1. This LRU behavior MAY avoid future unlucky property lookups.
+    const shape* const target_shape = shm_get_shape_unchecked(&c->shapes, object_shape_id);
+    const auto prop_entry = context_lookup_shape_slot(target_shape, key_id);
+
+    if (!prop_entry) {
+        return nullptr;
+    }
+
+    const auto prop_offset = prop_entry->offset;
+
+    buddy_ic->shape_ids[0] = object_shape_id;
+    buddy_ic->obj_offsets[0] = prop_offset;
+    buddy_ic->recv_ids[0] = object_id;
+
+    return &target_object->pvals[prop_offset];
+}
+
+[[nodiscard]]
+bool context_set_computed_property(context* c, value object_v, value key_v, value v) {
+    return false; // todo: implement
+}
+
+[[nodiscard]]
+value* context_get_computed_property(context* c, value object_v, value key_v) {
+    return nullptr; // todo: implement
 }
 
 [[nodiscard]]
