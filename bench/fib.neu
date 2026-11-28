@@ -1,0 +1,10 @@
+`test snippet`
+
+def fib = fun (n) -> cond {
+    n < 2: n,
+    else: fib(n - 1) + fib(n - 2)
+};
+
+def ans = fib(30);
+
+assert(ans == 832040, "Expected 832040");
