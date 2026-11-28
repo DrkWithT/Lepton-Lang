@@ -4,7 +4,7 @@
 
 
 
-static constexpr size_t bcc_initial_chunk_cap_v = 24;
+static constexpr size_t bcc_initial_chunk_cap_v = 8;
 static constexpr size_t bcc_initial_chunk_k_cap_v = 8;
 static constexpr size_t bcc_initial_chunk_ic_cap_v = 4;
 static constexpr size_t bcc_initial_chunk_upval_cap_v = 4;
@@ -144,7 +144,7 @@ uint16_t bcc_start_chunk(bcc_state* bcc) {
 
     chunk next_chunk = {
         .upval_entries = calloc(bcc_initial_chunk_upval_cap_v, sizeof(uint32_t)),
-        .bc = calloc(bcc_initial_chunk_cap_v, bcc_bc_byte_sz),
+        .bc = calloc(bcc_initial_chunk_cap_v, sizeof(inst)),
         .code_cap = bcc_initial_chunk_cap_v,
         .code_len = 0,
         .kd = calloc(bcc_initial_chunk_k_cap_v, sizeof(value)),
@@ -175,110 +175,56 @@ NL_CXX_INLINE uint16_t bcc_next_ip(const bcc_state* bcc) {
     return curr_chunk->code_len;
 }
 
-void bcc_emit_byte(bcc_state* bcc, uint8_t b) {
+uint16_t bcc_emit_inst(bcc_state* bcc, op o, uint16_t a0, uint16_t a1, uint16_t a2) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
-    const uint16_t next_len = curr_chunk->code_len;
-    const uint16_t curr_cap = curr_chunk->code_cap;
-    const uint16_t next_cap = curr_chunk->code_cap * 2;
+    const uint16_t bc_ipos = curr_chunk->code_len;
+    const auto bc_cap = curr_chunk->code_cap;
+    const auto new_cap = curr_chunk->code_cap * 2;
 
-    if (next_len >= bcc_bc_max_cap_v) {
-        NL_PANIC("Exhausted u16-max capacity of chunk in bcc here.", __FILE__, __LINE__)
+    if (bc_ipos >= UINT16_MAX) {
+        NL_PANIC("Bytecode of function has exceeded UINT16_MAX!", __FILE__, __LINE__)
     }
 
-    if (next_len >= curr_cap) {
-        uint8_t* next_bc_buf = realloc(curr_chunk->bc, bcc_bc_byte_sz * next_cap);
+    if (bc_ipos >= bc_cap) {
+        inst* new_code = realloc(curr_chunk->bc, sizeof(inst) * new_cap);
 
-        if (!next_bc_buf) {
-            NL_PANIC("Failed to reallocate bytecode buffer in bcc here.", __FILE__, __LINE__)
+        if (!new_code) {
+            NL_PANIC("Failed to grow bytecode buffer!", __FILE__, __LINE__)
         }
 
-        curr_chunk->bc = next_bc_buf;
-        curr_chunk->code_cap = next_cap;
+        curr_chunk->bc = new_code;
+        curr_chunk->code_cap = new_cap;
     }
 
-    curr_chunk->bc[next_len] = b;
+    curr_chunk->bc[bc_ipos] = (inst) {
+        o,
+        0,
+        a0,
+        a1,
+        a2
+    };
     curr_chunk->code_len++;
-}
-
-uint16_t bcc_emit_inst_nonary(bcc_state* bcc, op o) {
-    const uint16_t bc_ipos = ((const chunk*)dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
-
-    // printf("Emit %u: %u\n", bc_ipos, o);
-
-    bcc_emit_byte(bcc, (uint8_t) o);
-
-    // printf("bc-ptr: %p\n", ((const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid))->bc);
-
-    return bc_ipos;
-}
-
-uint16_t bcc_emit_inst_unary(bcc_state* bcc, op o, uint16_t a0) {
-    const uint16_t bc_ipos = ((const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
-
-    // printf("Emit %u: %u   %u\n", bc_ipos, o, a0); // ! debug
-
-    bcc_emit_byte(bcc, (uint8_t) o);
-    bcc_emit_byte(bcc, (uint8_t) (a0 & 0xff));
-    bcc_emit_byte(bcc, (uint8_t) ((a0 & 0xff00) >> 8));
-
-    // printf("bc-ptr: %p\n", ((const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid))->bc);
-
-    return bc_ipos;
-}
-
-uint16_t bcc_emit_inst_binary(bcc_state* bcc, op o, uint16_t a0, uint16_t a1) {
-    const uint16_t bc_ipos = ((const chunk*)dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
-
-    // printf("Emit %u: %u   %u, %u\n", bc_ipos, o, a0, a1);
-
-    bcc_emit_byte(bcc, (uint8_t) o);
-    bcc_emit_byte(bcc, (uint8_t) (a0 & 0xff));
-    bcc_emit_byte(bcc, (uint8_t) ((a0 & 0xff00) >> 8));
-    bcc_emit_byte(bcc, (uint8_t) (a1 & 0xff));
-    bcc_emit_byte(bcc, (uint8_t) ((a1 & 0xff00) >> 8));
-
-    // printf("bc-ptr: %p\n", ((const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid))->bc);
-
-    return bc_ipos;
-}
-
-uint16_t bcc_emit_inst_ternary(bcc_state* bcc, op o, uint16_t a0, uint16_t a1, uint16_t a2) {
-    const uint16_t bc_ipos = ((const chunk*)dynbuf_get(&bcc->chunks, bcc->curr_cid))->code_len;
-
-    // printf("Emit %u: %u   %u, %u, %u\n", bc_ipos, o, a0, a1, a2);
-
-    bcc_emit_byte(bcc, (uint8_t) o);
-    bcc_emit_byte(bcc, (uint8_t) (a0 & 0xff));
-    bcc_emit_byte(bcc, (uint8_t) ((a0 & 0xff00) >> 8));
-    bcc_emit_byte(bcc, (uint8_t) (a1 & 0xff));
-    bcc_emit_byte(bcc, (uint8_t) ((a1 & 0xff00) >> 8));
-    bcc_emit_byte(bcc, (uint8_t) (a2 & 0xff));
-    bcc_emit_byte(bcc, (uint8_t) ((a2 & 0xff00) >> 8));
-
-    // printf("bc-ptr: %p\n", ((const chunk*) dynbuf_get(&bcc->chunks, bcc->curr_cid))->bc);
 
     return bc_ipos;
 }
 
 void bcc_patch_cond_jump(bcc_state* bcc, uint16_t target_ip, uint16_t dest_ipos) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
-    const op checked_opcode = curr_chunk->bc[target_ip];
+    const op checked_opcode = curr_chunk->bc[target_ip].o;
 
     if (checked_opcode == nl_op_jmp_if || checked_opcode == nl_op_jmp_else) {
         // ? These offsets encode the u16 in operand `a1`: the absolute IP
-        curr_chunk->bc[target_ip + 3] = (dest_ipos & 0xff);
-        curr_chunk->bc[target_ip + 4] = (dest_ipos & 0xff00) >> 8;
+        curr_chunk->bc[target_ip].a1 = dest_ipos;
     }
 }
 
 void bcc_patch_jump(bcc_state* bcc, uint16_t target_ip, uint16_t dest_ipos) {
     auto curr_chunk = (chunk*) dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
-    const op checked_opcode = curr_chunk->bc[target_ip];
+    const op checked_opcode = curr_chunk->bc[target_ip].o;
 
     if (checked_opcode == nl_op_jmp) {
         // ? These offsets encode the u16 in operand `a0`: the absolute IP
-        curr_chunk->bc[target_ip + 1] = (dest_ipos & 0xff);
-        curr_chunk->bc[target_ip + 2] = (dest_ipos & 0xff00) >> 8;
+        curr_chunk->bc[target_ip].a0 = dest_ipos;
     }
 }
 
@@ -357,7 +303,7 @@ int32_t bcc_normalize_to_local_reg(bcc_state* bcc, bcc_result r) {
         const auto temp_local_r = bcc->top_reg++;
 
         bcc_update_curr_rc(bcc, bcc->top_reg);
-        bcc_emit_inst_binary(bcc, nl_op_ld_upval, temp_local_r, r.n);
+        bcc_emit_inst(bcc, nl_op_ld_upval, temp_local_r, r.n, 0);
 
         return temp_local_r;
     }
@@ -591,14 +537,14 @@ bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_
 
     if ((found_named_info = bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_global_k, 'G')) != nullptr) {
         if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
-            bcc_emit_inst_binary(bcc, nl_op_mov_rg, bcc->top_reg, found_named_info->n);
+            bcc_emit_inst(bcc, nl_op_mov_rg, bcc->top_reg, found_named_info->n, 0);
             actual_info.n = bcc->top_reg++;
             actual_info.cid = bcc->curr_cid;
             actual_info.tag = nl_bcc_sym_local_r;
         }
     } else if ((found_named_info = bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'L')) != nullptr) {
         if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
-            bcc_emit_inst_binary(bcc, nl_op_mov_rr, bcc->top_reg, found_named_info->n);
+            bcc_emit_inst(bcc, nl_op_mov_rr, bcc->top_reg, found_named_info->n, 0);
             actual_info.n = bcc->top_reg++;
             actual_info.cid = bcc->curr_cid;
             actual_info.tag = nl_bcc_sym_local_r;
@@ -609,7 +555,7 @@ bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_
         if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
             const auto upvalue_id = bcc_record_upval_info(bcc, found_named_info);
 
-            bcc_emit_inst_binary(bcc, nl_op_ld_upval, bcc->top_reg, upvalue_id);
+            bcc_emit_inst(bcc, nl_op_ld_upval, bcc->top_reg, upvalue_id, 0);
 
             actual_info.n = bcc->top_reg++;
             actual_info.cid = bcc->curr_cid;
@@ -674,7 +620,7 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
 
     switch (temp_tk->tag) {
         case nl_tk_kw_nil: {
-            bcc_emit_inst_unary(bcc, nl_op_store_nil, bcc->top_reg);
+            bcc_emit_inst(bcc, nl_op_store_nil, bcc->top_reg, 0, 0);
             bcc_update_curr_rc(bcc, bcc->top_reg + 1);
 
             return (bcc_result) {
@@ -686,7 +632,7 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
             };
         }
         case nl_tk_kw_true: case nl_tk_kw_false: {
-            bcc_emit_inst_binary(bcc, nl_op_store_bool, bcc->top_reg, temp_tk->tag == nl_tk_kw_true);
+            bcc_emit_inst(bcc, nl_op_store_bool, bcc->top_reg, temp_tk->tag == nl_tk_kw_true, 0);
             bcc_update_curr_rc(bcc, bcc->top_reg + 1);
 
             return (bcc_result) {
@@ -698,7 +644,7 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
             };
         }
         case nl_tk_kw_self: {
-            bcc_emit_inst_unary(bcc, nl_op_ref_self, bcc->top_reg);
+            bcc_emit_inst(bcc, nl_op_ref_self, bcc->top_reg, 0, 0);
 
             return (bcc_result) {
                 .n = bcc->top_reg++,
@@ -717,7 +663,7 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
                 .tag = nl_vtag_int
             });
 
-            bcc_emit_inst_binary(bcc, nl_op_mov_rk, bcc->top_reg, konst_i32_id);
+            bcc_emit_inst(bcc, nl_op_mov_rk, bcc->top_reg, konst_i32_id, 0);
             bcc_update_curr_rc(bcc, bcc->top_reg + 1);
 
             return (bcc_result) {
@@ -734,7 +680,7 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
                 .tag = nl_vtag_num
             });
 
-            bcc_emit_inst_binary(bcc, nl_op_mov_rk, bcc->top_reg, k_f32_id);
+            bcc_emit_inst(bcc, nl_op_mov_rk, bcc->top_reg, k_f32_id, 0);
             bcc_update_curr_rc(bcc, bcc->top_reg + 1);
 
             return (bcc_result) {
@@ -748,7 +694,7 @@ bcc_result bcc_emit_literal(bcc_state* bcc, const ast_node* node, uint16_t flags
         case nl_tk_lt_plain_str: {
             const auto plain_str_lit_info = bcc_record_string_k(bcc, temp_lexeme);
 
-            bcc_emit_inst_binary(bcc, nl_op_mov_rk, bcc->top_reg, plain_str_lit_info->n);
+            bcc_emit_inst(bcc, nl_op_mov_rk, bcc->top_reg, plain_str_lit_info->n, 0);
             bcc_update_curr_rc(bcc, bcc->top_reg + 1);
 
             return (bcc_result) {
@@ -814,7 +760,7 @@ bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t fla
         const auto param_name = tk_get_lexeme(lambda_params + param_pos, bcc->source);
         const auto param_local_reg = bcc_record_local(bcc, param_name)->n;
 
-        bcc_emit_inst_binary(bcc, nl_op_ld_arg, param_local_reg, param_pos);
+        bcc_emit_inst(bcc, nl_op_ld_arg, param_local_reg, param_pos, 0);
     }
 
     const auto body_flags = bcc_flag_set_n(bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1), (uint16_t[]) { nl_bcc_cf_started_fun_body }, 1);
@@ -830,8 +776,8 @@ bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t fla
     }
 
     // ! Put trailing `ret` in case the user forgets to put their result expression. The block emitter should always force its last (result) value into `acc` via `nl_op_ret`.
-    bcc_emit_inst_nonary(bcc, nl_op_close_upvals);
-    bcc_emit_inst_unary(bcc, nl_op_ret, checked_body_result.n);
+    bcc_emit_inst(bcc, nl_op_close_upvals, 0, 0, 0);
+    bcc_emit_inst(bcc, nl_op_ret, checked_body_result.n, 0, 0);
 
     string_del(&internal_lambda_name);
     bcc_end_scope(bcc);
@@ -839,7 +785,7 @@ bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t fla
     bcc->top_reg = internal_lambda_reg;
 
     // ! Emit lambda as temporary into parent scope's register for later use.
-    bcc_emit_inst_binary(bcc, nl_op_mk_closure, internal_lambda_reg, lambda_cid);
+    bcc_emit_inst(bcc, nl_op_mk_closure, internal_lambda_reg, lambda_cid, 0);
     bcc_update_curr_rc(bcc, bcc->top_reg);
 
     return (bcc_result) {
@@ -870,7 +816,7 @@ bcc_result bcc_emit_expr_new_table(bcc_state* bcc, const ast_node* node, uint16_
 
     if (!trait_var_info) {
         trait_var_reg = bcc->top_reg++;
-        bcc_emit_inst_unary(bcc, nl_op_store_nil, trait_var_reg);
+        bcc_emit_inst(bcc, nl_op_store_nil, trait_var_reg, 0, 0);
     } else {
         trait_var_reg = bcc_normalize_to_local_reg(bcc, (bcc_result) {
             .n = trait_var_info->n,
@@ -881,7 +827,7 @@ bcc_result bcc_emit_expr_new_table(bcc_state* bcc, const ast_node* node, uint16_
         });
     }
 
-    bcc_emit_inst_ternary(bcc, nl_op_inst_trait, object_temp_reg, trait_var_reg, new_table_node->props.n);  // todo: add u16::MAX check for initial properties
+    bcc_emit_inst(bcc, nl_op_inst_trait, object_temp_reg, trait_var_reg, new_table_node->props.n);  // todo: add u16::MAX check for initial properties
 
     const auto prop_expr_flags = bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1);
 
@@ -902,10 +848,10 @@ bcc_result bcc_emit_expr_new_table(bcc_state* bcc, const ast_node* node, uint16_
             return bcc_dud_result_v;
         }
 
-        bcc_emit_inst_ternary(bcc, nl_op_init_prop, object_temp_reg, prop_key_id, prop_init_v_reg);
+        bcc_emit_inst(bcc, nl_op_init_prop, object_temp_reg, prop_key_id, prop_init_v_reg);
     }
 
-    bcc_emit_inst_unary(bcc, nl_op_seal_obj, object_temp_reg);
+    bcc_emit_inst(bcc, nl_op_seal_obj, object_temp_reg, 0, 0);
     bcc->top_reg = object_temp_reg + 1;
 
     return (bcc_result) {
@@ -937,7 +883,7 @@ bcc_result bcc_emit_expr_access(bcc_state* bcc, const ast_node* node, uint16_t f
     const uint16_t object_temp_reg = bcc_normalize_to_local_reg(bcc, object_target_result);
     const uint16_t temp_item_reg = bcc->top_reg++; // ! Reserve register just above the target object's reference to avoid losing it for possible method calls. Above the target will be a property sub-value, possibly a method.
 
-    bcc_emit_inst_binary(bcc, nl_op_mov_rr, temp_item_reg, object_temp_reg);
+    bcc_emit_inst(bcc, nl_op_mov_rr, temp_item_reg, object_temp_reg, 0);
 
     for (uint16_t prop_access_pos = 0; prop_access_pos < prop_access_last_pos; prop_access_pos++) {
         const auto next_prop_access = &prop_accesses[prop_access_pos];
@@ -946,8 +892,8 @@ bcc_result bcc_emit_expr_access(bcc_state* bcc, const ast_node* node, uint16_t f
         if (next_prop_access->is_named) {
             const auto prop_key_imm = bcc_record_prop_key_imm(bcc, tk_get_lexeme(&next_prop_access->data.name_tk, bcc->source));
             
-            bcc_emit_inst_unary(bcc, nl_op_use_ic, prop_site_ic_id);
-            bcc_emit_inst_ternary(bcc, nl_op_get_prop, temp_item_reg, object_temp_reg, prop_key_imm);
+            bcc_emit_inst(bcc, nl_op_use_ic, prop_site_ic_id, 0, 0);
+            bcc_emit_inst(bcc, nl_op_get_prop, temp_item_reg, object_temp_reg, prop_key_imm);
         } else {
             const auto prop_comp_key_result = bcc_emit_next(bcc, next_prop_access->data.comp_key, access_key_flags);
 
@@ -957,13 +903,13 @@ bcc_result bcc_emit_expr_access(bcc_state* bcc, const ast_node* node, uint16_t f
 
             const uint16_t prop_comp_key_reg = bcc_normalize_to_local_reg(bcc, prop_comp_key_result);
 
-            bcc_emit_inst_ternary(bcc, nl_op_get_item, temp_item_reg, object_temp_reg, prop_comp_key_reg);
+            bcc_emit_inst(bcc, nl_op_get_item, temp_item_reg, object_temp_reg, prop_comp_key_reg);
 
             bcc->top_reg = temp_item_reg + 1;
         }
 
         if (prop_access_pos + 1 < prop_access_last_pos) {
-            bcc_emit_inst_binary(bcc, nl_op_mov_rr, object_temp_reg, temp_item_reg);
+            bcc_emit_inst(bcc, nl_op_mov_rr, object_temp_reg, temp_item_reg, 0);
         }
     }
 
@@ -1041,7 +987,7 @@ bcc_result bcc_emit_expr_call(bcc_state* bcc, const ast_node* node, uint16_t fla
             return next_arg_result;
         }
 
-        bcc_emit_inst_binary(bcc, nl_op_sto_arg, arg_pos, next_arg_result.n);
+        bcc_emit_inst(bcc, nl_op_sto_arg, arg_pos, next_arg_result.n, 0);
     }
 
     const auto callee_reg = bcc_normalize_to_local_reg(bcc, callee_emit_result);
@@ -1055,24 +1001,24 @@ bcc_result bcc_emit_expr_call(bcc_state* bcc, const ast_node* node, uint16_t fla
     uint16_t accr_spill_reg;
 
     if (callee_emit_result.domain == nl_bcc_sym_local_r) {
-        bcc_emit_inst_unary(bcc, nl_op_call, callee_emit_result.n);
-        bcc_emit_inst_unary(bcc, nl_op_ld_accr, bcc->top_reg);
+        bcc_emit_inst(bcc, nl_op_call, callee_emit_result.n, 0, 0);
+        bcc_emit_inst(bcc, nl_op_ld_accr, bcc->top_reg, 0, 0);
 
         accr_spill_reg = bcc->top_reg;
 
         bcc_update_curr_rc(bcc, bcc->top_reg++);
     } else if (callee_emit_result.domain == nl_bcc_sym_upvalue) {
-        bcc_emit_inst_binary(bcc, nl_op_ld_upval, bcc->top_reg, callee_emit_result.n);
-        bcc_emit_inst_unary(bcc, nl_op_call, bcc->top_reg++);
+        bcc_emit_inst(bcc, nl_op_ld_upval, bcc->top_reg, callee_emit_result.n, 0);
+        bcc_emit_inst(bcc, nl_op_call, bcc->top_reg++, 0, 0);
 
         accr_spill_reg = bcc->top_reg;
 
-        bcc_emit_inst_unary(bcc, nl_op_ld_accr, accr_spill_reg);
+        bcc_emit_inst(bcc, nl_op_ld_accr, accr_spill_reg, 0, 0);
         bcc_update_curr_rc(bcc, bcc->top_reg);
     } else if (callee_emit_result.with_extra) {
         if (callee_emit_result.domain == nl_bcc_sym_prop_key_imm) {
-            bcc_emit_inst_unary(bcc, nl_op_use_ic, nl_bcc_place_ic(bcc, bcc_idle_ic_v));
-            bcc_emit_inst_binary(bcc, nl_op_call_method, callee_emit_result.extra_dest_reg, callee_emit_result.n);
+            bcc_emit_inst(bcc, nl_op_use_ic, nl_bcc_place_ic(bcc, bcc_idle_ic_v), 0, 0);
+            bcc_emit_inst(bcc, nl_op_call_method, callee_emit_result.extra_dest_reg, callee_emit_result.n, 0);
         } else {
             bcc_report_err(bcc, "Invalid callee location found around here.", bcc->line, bcc->col);
 
@@ -1128,7 +1074,7 @@ bcc_result bcc_emit_unary(bcc_state* bcc, const ast_node* node, uint16_t flags) 
         return bcc_dud_result_v;
     }
 
-    bcc_emit_inst_unary(bcc, runtime_op, resolved_reg);
+    bcc_emit_inst(bcc, runtime_op, resolved_reg, 0, 0);
     bcc_update_curr_rc(bcc, bcc->top_reg);
     bcc->top_reg = resolved_reg + 1;
 
@@ -1182,7 +1128,7 @@ bcc_result bcc_emit_binary_normal(bcc_state* bcc, const ast_node* node, uint16_t
         default: break;
     }
 
-    bcc_emit_inst_ternary(bcc, runtime_op, resolved_lhs_reg, resolved_lhs_reg, resolved_rhs_reg);
+    bcc_emit_inst(bcc, runtime_op, resolved_lhs_reg, resolved_lhs_reg, resolved_rhs_reg);
     bcc_update_curr_rc(bcc, bcc->top_reg);
     bcc->top_reg = resolved_lhs_reg + 1;
 
@@ -1216,7 +1162,7 @@ bcc_result bcc_emit_binary_logical(bcc_state* bcc, const ast_node* node, uint16_
     }
 
     const auto resolved_lhs_reg = bcc_normalize_to_local_reg(bcc, lhs_result);
-    const auto jumper_ipos = bcc_emit_inst_binary(bcc, binary_logical_runtime_op, resolved_lhs_reg, -1);
+    const auto jumper_ipos = bcc_emit_inst(bcc, binary_logical_runtime_op, resolved_lhs_reg, -1, 0);
 
     const auto rhs_result = bcc_emit_next(bcc, binary_rhs, operand_flags);
 
@@ -1225,7 +1171,7 @@ bcc_result bcc_emit_binary_logical(bcc_state* bcc, const ast_node* node, uint16_
     }
 
     const auto resolved_rhs_reg = bcc_normalize_to_local_reg(bcc, rhs_result);
-    const auto end_binary_logical_ipos = bcc_emit_inst_binary(bcc, nl_op_mov_rr, resolved_lhs_reg, resolved_rhs_reg) + 1;
+    const auto end_binary_logical_ipos = bcc_emit_inst(bcc, nl_op_mov_rr, resolved_lhs_reg, resolved_rhs_reg, 0) + 1;
 
     bcc_patch_cond_jump(bcc, jumper_ipos, end_binary_logical_ipos);
 
@@ -1274,16 +1220,16 @@ bcc_result bcc_emit_expr_assign(bcc_state* bcc, const ast_node* node, uint16_t f
         const auto dest_reg = dest_result.n;
     
         if (assign_runtime_op == nl_op_mov_rr) {
-            bcc_emit_inst_binary(bcc, assign_runtime_op, dest_reg, src_reg);
+            bcc_emit_inst(bcc, assign_runtime_op, dest_reg, src_reg, 0);
         } else {
-            bcc_emit_inst_ternary(bcc, assign_runtime_op, dest_reg, dest_reg, src_reg);
+            bcc_emit_inst(bcc, assign_runtime_op, dest_reg, dest_reg, src_reg);
         }
     
         bcc_update_curr_rc(bcc, src_reg + 1);
         bcc->top_reg = dest_reg + 1;
     } else if (dest_result.domain == nl_bcc_sym_upvalue) {
         if (assign_runtime_op == nl_op_mov_rr) {
-            bcc_emit_inst_binary(bcc, nl_op_sto_upval, dest_result.n, src_reg);
+            bcc_emit_inst(bcc, nl_op_sto_upval, dest_result.n, src_reg, 0);
         } else {
             // todo: support upvalue in-place MDAS opcodes...
             bcc_report_err(bcc, "Compound assignment operators are unsupported for captured names.", bcc->line, bcc->col);
@@ -1293,10 +1239,10 @@ bcc_result bcc_emit_expr_assign(bcc_state* bcc, const ast_node* node, uint16_t f
     } else if (dest_result.with_extra) {
         if (assign_runtime_op == nl_op_mov_rr) {
             if (dest_result.domain == nl_bcc_sym_prop_key_imm) {
-                bcc_emit_inst_unary(bcc, nl_op_use_ic, nl_bcc_place_ic(bcc, bcc_idle_ic_v));
-                bcc_emit_inst_ternary(bcc, nl_op_set_prop, dest_result.extra_dest_reg, dest_result.n, src_reg);
+                bcc_emit_inst(bcc, nl_op_use_ic, nl_bcc_place_ic(bcc, bcc_idle_ic_v), 0, 0);
+                bcc_emit_inst(bcc, nl_op_set_prop, dest_result.extra_dest_reg, dest_result.n, src_reg);
             } else if (dest_result.domain == nl_bcc_sym_local_r) {
-                bcc_emit_inst_ternary(bcc, nl_op_set_item, dest_result.extra_dest_reg, dest_result.n, src_reg);
+                bcc_emit_inst(bcc, nl_op_set_item, dest_result.extra_dest_reg, dest_result.n, src_reg);
             } else {
                 bcc_report_err(bcc, "Invalid property assignment destination found around here.", bcc->line, bcc->col);
 
@@ -1345,7 +1291,7 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
             }
 
             const auto entry_check_temp_reg = bcc_normalize_to_local_reg(bcc, entry_check_result);
-            const auto entry_checked_jump_ipos = bcc_emit_inst_binary(bcc, nl_op_jmp_else, entry_check_temp_reg, 0);
+            const auto entry_checked_jump_ipos = bcc_emit_inst(bcc, nl_op_jmp_else, entry_check_temp_reg, 0, 0);
             const auto entry_resultant_result = bcc_emit_next(bcc, cond_case_resultant, cond_item_flags);
 
             if (!bcc_flag_check_n(entry_resultant_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
@@ -1356,10 +1302,10 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
 
             const auto entry_resultant_value_reg = bcc_normalize_to_local_reg(bcc, entry_resultant_result);
             
-            bcc_emit_inst_binary(bcc, nl_op_mov_rr, cond_result_value_reg, entry_resultant_value_reg);
+            bcc_emit_inst(bcc, nl_op_mov_rr, cond_result_value_reg, entry_resultant_value_reg, 0);
             bcc_update_curr_rc(bcc, bcc->top_reg);
 
-            const auto next_exit_jump_ipos = bcc_emit_inst_unary(bcc, nl_op_jmp, 0);
+            const auto next_exit_jump_ipos = bcc_emit_inst(bcc, nl_op_jmp, 0, 0, 0);
             const auto next_entry_ipos = bcc_next_ip(bcc);
 
             bcc_patch_cond_jump(bcc, entry_checked_jump_ipos, next_entry_ipos);
@@ -1375,12 +1321,12 @@ bcc_result bcc_emit_cond(bcc_state* bcc, const ast_node* node, uint16_t flags) {
 
             const auto last_entry_result_value_reg = bcc_normalize_to_local_reg(bcc, last_entry_resultant_result);
 
-            bcc_emit_inst_binary(bcc, nl_op_mov_rr, cond_result_value_reg, last_entry_result_value_reg);
+            bcc_emit_inst(bcc, nl_op_mov_rr, cond_result_value_reg, last_entry_result_value_reg, 0);
             bcc_update_curr_rc(bcc, bcc->top_reg);
         }
     }
 
-    const auto end_cond_ipos = bcc_emit_inst_nonary(bcc, nl_op_nop);
+    const auto end_cond_ipos = bcc_next_ip(bcc);
 
     for (uint16_t jump_ipos_index = 0; jump_ipos_index < cond_ending_ips.n; jump_ipos_index++) {
         bcc_patch_jump(bcc, *((const uint16_t*) dynbuf_get(&cond_ending_ips, jump_ipos_index)), end_cond_ipos);
@@ -1425,7 +1371,7 @@ bcc_result bcc_emit_loop(bcc_state* bcc, const ast_node* node, uint16_t flags) {
     }
 
     const auto loop_initializer_reg = bcc_normalize_to_local_reg(bcc, loop_initial_result);
-    bcc_emit_inst_binary(bcc, nl_op_mov_rr, loop_temp_reg, loop_initializer_reg);
+    bcc_emit_inst(bcc, nl_op_mov_rr, loop_temp_reg, loop_initializer_reg, 0);
 
     bcc_start_loop(bcc, loop_temp_reg);
 
@@ -1437,7 +1383,7 @@ bcc_result bcc_emit_loop(bcc_state* bcc, const ast_node* node, uint16_t flags) {
     }
 
     const auto loop_check_reg = bcc_normalize_to_local_reg(bcc, loop_check_result);
-    const auto loop_exit_ip = bcc_emit_inst_binary(bcc, nl_op_jmp_else, loop_check_reg, 0);
+    const auto loop_exit_ip = bcc_emit_inst(bcc, nl_op_jmp_else, loop_check_reg, 0, 0);
 
     const auto loop_body_result = bcc_emit_next(bcc, loop_body, loop_expr_flags);
     if (!bcc_flag_check_n(loop_body_result.flags, (uint16_t[]) { nl_bcc_cf_ok }, 1)) {
@@ -1450,7 +1396,7 @@ bcc_result bcc_emit_loop(bcc_state* bcc, const ast_node* node, uint16_t flags) {
         return loop_update_result;
     }
 
-    const uint16_t loop_repeater_ip = bcc_emit_inst_unary(bcc, nl_op_jmp, loop_begin_ipos), loop_ender_ipos = loop_repeater_ip + 3;
+    const uint16_t loop_repeater_ip = bcc_emit_inst(bcc, nl_op_jmp, loop_begin_ipos, 0, 0), loop_ender_ipos = loop_repeater_ip + 1;
 
     bcc_patch_cond_jump(bcc, loop_exit_ip, loop_ender_ipos);
 
@@ -1509,9 +1455,9 @@ bcc_result bcc_emit_loop_abator(bcc_state* bcc, const ast_node* node, uint16_t f
     const auto loop_temp_result_reg = loop_record->acc_reg;
     const auto loop_abator_temp_reg = bcc_normalize_to_local_reg(bcc, loop_abator_expr_result);
 
-    bcc_emit_inst_binary(bcc, nl_op_mov_rr, loop_temp_result_reg, loop_abator_temp_reg);
+    bcc_emit_inst(bcc, nl_op_mov_rr, loop_temp_result_reg, loop_abator_temp_reg, 0);
 
-    const auto loop_abator_ipos = bcc_emit_inst_unary(bcc, nl_op_jmp, 0);
+    const auto loop_abator_ipos = bcc_emit_inst(bcc, nl_op_jmp, 0, 0, 0);
 
     if (abator_is_break) {
         dynbuf_push(&loop_record->exit_iposv, &loop_abator_ipos);
@@ -1534,7 +1480,7 @@ bcc_result bcc_emit_def_binding(bcc_state* bcc, tk name_tk, const ast_node* init
     if (bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_pass_defs }, 1)) {
         const auto reserved_local_result = bcc_record_local(bcc, var_name);
 
-        bcc_emit_inst_unary(bcc, nl_op_store_nil, reserved_local_result->n);
+        bcc_emit_inst(bcc, nl_op_store_nil, reserved_local_result->n, 0, 0);
         bcc_update_curr_rc(bcc, reserved_local_result->n + 1);
 
         return (bcc_result) {
@@ -1551,7 +1497,7 @@ bcc_result bcc_emit_def_binding(bcc_state* bcc, tk name_tk, const ast_node* init
         const auto reserved_init_result = bcc_emit_next(bcc, initializer, bcc_flag_unset_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1));
         const auto reserved_init_reg = bcc_normalize_to_local_reg(bcc, reserved_init_result);
 
-        bcc_emit_inst_binary(bcc, nl_op_mov_rr, found_local_info->n, reserved_init_reg);
+        bcc_emit_inst(bcc, nl_op_mov_rr, found_local_info->n, reserved_init_reg, 0);
         bcc_update_curr_rc(bcc, bcc->top_reg);
 
         return (bcc_result) {
@@ -1635,8 +1581,8 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
 
     if (bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_started_fun_body }, 1)) {
         if (last_value_reg >= 0) {
-            bcc_emit_inst_nonary(bcc, nl_op_close_upvals);
-            bcc_emit_inst_unary(bcc, nl_op_ret, last_value_reg);
+            bcc_emit_inst(bcc, nl_op_close_upvals, 0, 0, 0);
+            bcc_emit_inst(bcc, nl_op_ret, last_value_reg, 0, 0);
 
             return (bcc_result) {
                 .n = last_value_reg,
@@ -1646,9 +1592,9 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
                 .with_extra = false
             };
         } else {
-            bcc_emit_inst_nonary(bcc, nl_op_close_upvals);
-            bcc_emit_inst_unary(bcc, nl_op_store_nil, block_baseline_reg);
-            bcc_emit_inst_unary(bcc, nl_op_ret, block_baseline_reg);
+            bcc_emit_inst(bcc, nl_op_close_upvals, 0, 0, 0);
+            bcc_emit_inst(bcc, nl_op_store_nil, block_baseline_reg, 0, 0);
+            bcc_emit_inst(bcc, nl_op_ret, block_baseline_reg, 0, 0);
 
             return (bcc_result) {
                 .n = block_baseline_reg,
@@ -1660,7 +1606,7 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
         }
     } else {
         if (last_value_reg >= 0) {
-            bcc_emit_inst_binary(bcc, nl_op_mov_rr, block_baseline_reg, last_value_reg);
+            bcc_emit_inst(bcc, nl_op_mov_rr, block_baseline_reg, last_value_reg, 0);
             // bcc->top_reg = block_baseline_reg + 1;
 
             return (bcc_result) {
@@ -1671,7 +1617,7 @@ bcc_result bcc_emit_block(bcc_state* bcc, const ast_node* node, uint16_t flags) 
                 .with_extra = false
             };
         } else {
-            bcc_emit_inst_unary(bcc, nl_op_store_nil, block_baseline_reg);
+            bcc_emit_inst(bcc, nl_op_store_nil, block_baseline_reg, 0, 0);
             // bcc->top_reg = block_baseline_reg + 1;
 
             return (bcc_result) {
@@ -1699,8 +1645,8 @@ bcc_result bcc_emit_stmt_ret(bcc_state* bcc, const ast_node* node, uint16_t flag
         return bcc_dud_result_v;
     }
 
-    bcc_emit_inst_nonary(bcc, nl_op_close_upvals);
-    bcc_emit_inst_unary(bcc, nl_op_ret, reserved_ret_reg);
+    bcc_emit_inst(bcc, nl_op_close_upvals, 0, 0, 0);
+    bcc_emit_inst(bcc, nl_op_ret, reserved_ret_reg, 0, 0);
     bcc_update_curr_rc(bcc, pre_ret_top_reg); // ! save register window space despite the stack-reg-alloc per result if duped returns are written by the user!
 
     return (bcc_result) {
@@ -1807,9 +1753,9 @@ bool nl_bcc_record_native_callable(bcc_state* bcc, const str* name, nl_native_t 
     bcc->natives[next_native_id] = f;
     bcc->natives_n++;
 
-    bcc_emit_inst_binary(bcc, nl_op_call_n, next_native_id, arity);
-    bcc_emit_inst_unary(bcc, nl_op_ld_accr, 0);
-    bcc_emit_inst_unary(bcc, nl_op_ret, 0);
+    bcc_emit_inst(bcc, nl_op_call_n, next_native_id, arity, 0);
+    bcc_emit_inst(bcc, nl_op_ld_accr, 0, 0, 0);
+    bcc_emit_inst(bcc, nl_op_ret, 0, 0, 0);
     
     closure new_closure = {
         // ! IMPORTANT: native functions don't need capturing here because they can access all of the VM state via `context* c`. See `typedef nl_native_t`.
@@ -1891,10 +1837,10 @@ program nl_bcc_compile_tu(bcc_state* bcc, const ast_unit* tu) {
     }
 
     if (top_level_result_reg >= 0) {
-        bcc_emit_inst_unary(bcc, nl_op_ret, top_level_result_reg);
+        bcc_emit_inst(bcc, nl_op_ret, top_level_result_reg, 0, 0);
     } else {
-        bcc_emit_inst_unary(bcc, nl_op_store_nil, bcc->top_reg);
-        bcc_emit_inst_unary(bcc, nl_op_ret, bcc->top_reg++);
+        bcc_emit_inst(bcc, nl_op_store_nil, bcc->top_reg, 0, 0);
+        bcc_emit_inst(bcc, nl_op_ret, bcc->top_reg++, 0, 0);
     }
 
     return (program) {

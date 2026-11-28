@@ -62,9 +62,17 @@ typedef enum nl_op_t : uint8_t {
     nl_op_ret,          // ret src
 } op;
 
+typedef struct nl_inst_t {
+    op o;
+    uint8_t ex;  // ! extra flags if needed
+    uint16_t a0;
+    uint16_t a1;
+    uint16_t a2;
+} inst;
+
 typedef struct nl_chunk_t {
     uint32_t* upval_entries;    // list of masked `u32`s: lower u16 has CID, upper has slot-ID
-    uint8_t* bc;        // bytecode
+    inst* bc;        // bytecode
     value* kd;          // constants data
     ic* icv;            // property-access inline caches
     uint16_t code_len;  // `inst` count

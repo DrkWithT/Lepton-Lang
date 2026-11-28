@@ -154,21 +154,21 @@ void value_output(FILE* os, value v) {
     }
 }
 
-void inst_output(FILE* os, const uint8_t* ip, uint8_t arity) {
-    fprintf(os, "%s ", bc_opcode_names_v[*ip]);
+void inst_output(FILE* os, const inst* ip, uint8_t arity) {
+    fprintf(os, "%s ", bc_opcode_names_v[ip->o]);
 
     switch (arity) {
         case 1:
-            fprintf(os, "%u", ip[1] + (ip[2] << 8));
+            fprintf(os, "%u", ip->a0);
             break;
         case 2:
-            fprintf(os, "%u, ", ip[1] + (ip[2] << 8));
-            fprintf(os, "%u", ip[3] + (ip[4] << 8));
+            fprintf(os, "%u, ", ip->a0);
+            fprintf(os, "%u", ip->a1);
             break;
         case 3:
-            fprintf(os, "%u, ", ip[1] + (ip[2] << 8));
-            fprintf(os, "%u, ", ip[3] + (ip[4] << 8));
-            fprintf(os, "%u", ip[5] + (ip[6] << 8));
+            fprintf(os, "%u, ", ip->a0);
+            fprintf(os, "%u, ", ip->a1);
+            fprintf(os, "%u", ip->a2);
             break;
         default:
             break;
@@ -177,7 +177,7 @@ void inst_output(FILE* os, const uint8_t* ip, uint8_t arity) {
 
 void chunk_output(FILE* os, const chunk* c) {
     const value* const chunk_consts = c->kd;
-    const uint8_t* const chunk_bc = c->bc;
+    const inst* const chunk_bc = c->bc;
     const uint32_t* const chunk_upvals = c->upval_entries;
     const auto chunk_bc_len = c->code_len;
     const auto chunk_consts_len = c->k_len;
@@ -205,56 +205,56 @@ void chunk_output(FILE* os, const chunk* c) {
 
     fprintf(os, "\n---- CODE ----\n");
 
-    for (uint16_t bc_byte_pos = 0; bc_byte_pos < chunk_bc_len; ) {
+    for (uint16_t bc_byte_pos = 0; bc_byte_pos < chunk_bc_len; bc_byte_pos++) {
         fprintf(os, "%u: ", bc_byte_pos);
 
-        switch ((op) chunk_bc[bc_byte_pos]) {
-            case nl_op_nop: inst_output(os, chunk_bc + bc_byte_pos, 0); bc_byte_pos++; break;
-            case nl_op_store_nil: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
-            case nl_op_store_bool: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_swap_r: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_loadi_u16: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_mov_rk: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_mov_rr: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_mov_rg: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_sto_arg: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_ld_arg: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_ld_upval: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_sto_upval: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_close_upvals: inst_output(os, chunk_bc + bc_byte_pos, 0); bc_byte_pos++; break;
-            case nl_op_use_ic: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
-            case nl_op_inst_trait: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_seal_obj: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
-            case nl_op_init_prop: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_set_prop: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_get_prop: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_set_item: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_get_item: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_ref_self: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
-            case nl_op_ld_accr: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
-            case nl_op_test_nil: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
-            case nl_op_neg_num: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
-            case nl_op_neg_log: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
-            case nl_op_mod: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_mul: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_div: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_add: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_sub: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_lt: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_lte: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_gt: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_gte: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_eq: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_ne: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_jmp_not_nil: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_jmp_if: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_jmp_else: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_jmp: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
-            case nl_op_mk_closure: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_call: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
-            case nl_op_call_n: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_call_method: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_ret: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
+        switch ((op) chunk_bc[bc_byte_pos].o) {
+            case nl_op_nop: inst_output(os, chunk_bc + bc_byte_pos, 0); break;
+            case nl_op_store_nil: inst_output(os, chunk_bc + bc_byte_pos, 1); break;
+            case nl_op_store_bool: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_swap_r: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_loadi_u16: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_mov_rk: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_mov_rr: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_mov_rg: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_sto_arg: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_ld_arg: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_ld_upval: inst_output(os, chunk_bc + bc_byte_pos, 2);  break;
+            case nl_op_sto_upval: inst_output(os, chunk_bc + bc_byte_pos, 2);  break;
+            case nl_op_close_upvals: inst_output(os, chunk_bc + bc_byte_pos, 0); break;
+            case nl_op_use_ic: inst_output(os, chunk_bc + bc_byte_pos, 1); break;
+            case nl_op_inst_trait: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_seal_obj: inst_output(os, chunk_bc + bc_byte_pos, 1); break;
+            case nl_op_init_prop: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_set_prop: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_get_prop: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_set_item: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_get_item: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_ref_self: inst_output(os, chunk_bc + bc_byte_pos, 1); break;
+            case nl_op_ld_accr: inst_output(os, chunk_bc + bc_byte_pos, 1); break;
+            case nl_op_test_nil: inst_output(os, chunk_bc + bc_byte_pos, 1); break;
+            case nl_op_neg_num: inst_output(os, chunk_bc + bc_byte_pos, 1); break;
+            case nl_op_neg_log: inst_output(os, chunk_bc + bc_byte_pos, 1); break;
+            case nl_op_mod: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_mul: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_div: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_add: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_sub: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_lt: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_lte: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_gt: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_gte: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_eq: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_ne: inst_output(os, chunk_bc + bc_byte_pos, 3); break;
+            case nl_op_jmp_not_nil: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_jmp_if: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_jmp_else: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_jmp: inst_output(os, chunk_bc + bc_byte_pos, 1); break;
+            case nl_op_mk_closure: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_call: inst_output(os, chunk_bc + bc_byte_pos, 1); break;
+            case nl_op_call_n: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_call_method: inst_output(os, chunk_bc + bc_byte_pos, 2); break;
+            case nl_op_ret: inst_output(os, chunk_bc + bc_byte_pos, 1); break;
             default: fprintf(os, "(unknown op)"); return;
         }
 

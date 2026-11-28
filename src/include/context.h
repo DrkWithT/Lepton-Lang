@@ -15,8 +15,8 @@ typedef enum nl_context_flags_t : uint16_t {
 } context_flags;
 
 typedef struct nl_context_frame_t {
-    const uint8_t* caller_base_ip;
-    const uint8_t* caller_ip;
+    const inst* caller_base_ip;
+    const inst* caller_ip;
     const value* caller_kp;
     ic* caller_icaches;
     value* caller_stack_base;
@@ -42,8 +42,8 @@ typedef struct nl_context_t {
     value* stack;       // all register slots
     value* gv;          // global values buffer
     value* arg_regs;    // scratch registers for up to 255 argument values per callee
-    const uint8_t* base_ip;     // code start of chunk
-    const uint8_t* ip;  // points to first byte of encoded instruction
+    const inst* base_ip;     // code start of chunk
+    const inst* ip;  // points to first byte of encoded instruction
     const value* kp;    // points to chunk constants
     ic* icp;            // points to chunk ICs
     value* stack_bp;
@@ -64,7 +64,7 @@ void context_del(context* c);
 [[nodiscard]]
 value context_try_closurify(context* c, uint16_t chunk_id);
 
-bool context_try_invoke(context* c, value callee, int32_t maybe_self_id, uint16_t ret_ip_nudge);
+bool context_try_invoke(context* c, value callee, int32_t maybe_self_id);
 
 bool context_try_invoke_method(context* c, value caller_obj, int16_t prop_method_id);
 

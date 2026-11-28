@@ -19,15 +19,15 @@ constexpr int32_t nl_ic_entry_windows[] = {
 };
 constexpr uint16_t nl_ic_leeways[] = {
     [nl_ics_idle] = 1,
-    [nl_ics_mono] = 1000,
-    [nl_ics_poly] = 2000,
+    [nl_ics_mono] = 10, // ! allow 10 misses to quickly transition to PIC if needed.
+    [nl_ics_poly] = 1000,
     [nl_ics_dead] = 40000
 };
 
 
 
 [[nodiscard]]
-NL_CXX_INLINE int32_t context_lookup_ic(ic* cache, int32_t reciever_shape_id) {
+int32_t context_lookup_ic(ic* cache, int32_t reciever_shape_id) {
     const auto curr_ic_entry_window = nl_ic_entry_windows[cache->state];
 
     for (int32_t ic_entry_pos = 0; ic_entry_pos < curr_ic_entry_window; ic_entry_pos++) {
@@ -76,7 +76,7 @@ NL_CXX_INLINE const shape_ent* context_lookup_shape_slot(const shape* target_sha
 [[nodiscard]]
 context context_new(program pg, size_t shape_capacity) {
     const auto vm_initial_chunk = (chunk*) dynbuf_get_mut(&pg.chunks, pg.entry_cid);
-    const uint8_t* vm_initial_ip = vm_initial_chunk->bc;
+    const inst* vm_initial_ip = vm_initial_chunk->bc;
     const value* vm_initial_kp = vm_initial_chunk->kd;
     auto vm_initial_icp = vm_initial_chunk->icv;
 
@@ -224,7 +224,7 @@ value context_try_closurify(context* c, uint16_t chunk_id) {
     };
 }
 
-bool context_try_invoke(context* c, value callee, int32_t maybe_self_id, uint16_t ret_ip_nudge) {
+bool context_try_invoke(context* c, value callee, int32_t maybe_self_id) {
     if (callee.tag != nl_vtag_closure) {
         return false;
     }
@@ -236,7 +236,7 @@ bool context_try_invoke(context* c, value callee, int32_t maybe_self_id, uint16_
         context_frame target_frame = {
             .caller_base_ip = c->base_ip,
             // ! IMPORTANT: skip next 2 u16 operands of current call-opcode in the caller to avoid misinterpretation
-            .caller_ip = c->ip + ret_ip_nudge,
+            .caller_ip = c->ip + 1,
             .caller_kp = c->kp,
             .caller_icaches = c->icp,
             .caller_stack_base = c->stack_bp,
@@ -299,7 +299,7 @@ bool context_try_invoke_method(context* c, value caller_obj, int16_t prop_method
 
     // ! IC Hits, so we're in "La La Land". Just use the cached offset according to the object's layout vs. a full shape lookup.
     if (ic_result_offset != nl_ic_dud_offset) {
-        return context_try_invoke(c, target_object->pvals[ic_result_offset], object_id, 6);
+        return context_try_invoke(c, target_object->pvals[ic_result_offset], object_id);
     }
 
     // ! Otherwise, we need to update the now invalidated IC with this fresh miss as entry 1. This LRU behavior MAY avoid future unlucky property lookups.
@@ -316,7 +316,7 @@ bool context_try_invoke_method(context* c, value caller_obj, int16_t prop_method
     buddy_ic->obj_offsets[0] = prop_offset;
     buddy_ic->recv_ids[0] = object_id;
 
-    return context_try_invoke(c, target_object->pvals[prop_offset], object_id, 6);
+    return context_try_invoke(c, target_object->pvals[prop_offset], object_id);
 }
 
 void context_seal_object(context* c, value object_v) {
