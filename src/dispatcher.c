@@ -146,12 +146,10 @@ void op_swap_r(context* c) {
 
     const auto dest_reg = decode_operand_at(c->ip);
     const auto src_reg = decode_operand_at(c->ip + 2);
+    const auto temp_v = c->stack_bp[dest_reg];
 
-    auto regs = c->stack_bp;
-    const auto temp_v = regs[dest_reg];
-
-    regs[dest_reg] = regs[src_reg];
-    regs[src_reg] = temp_v;
+    c->stack_bp[dest_reg] = c->stack_bp[src_reg];
+    c->stack_bp[src_reg] = temp_v;
     c->ip += 4;
 
     TAILCALL
@@ -189,9 +187,8 @@ void op_mov_rr(context* c) {
 
     const auto dest_reg = decode_operand_at(c->ip);
     const auto src_reg = decode_operand_at(c->ip + 2);
-    auto regs = c->stack_bp;
 
-    regs[dest_reg] = regs[src_reg];
+    c->stack_bp[dest_reg] = c->stack_bp[src_reg];
     c->ip += 4;
 
     TAILCALL
@@ -241,19 +238,12 @@ void op_ld_upval(context* c) {
     c->ip++;
 
     const auto dest_reg = decode_operand_at(c->ip);
-    const auto uv_local_reg = decode_operand_at(c->ip + 2);
-    const auto uv_cid = decode_operand_at(c->ip + 4);
+    const auto uv_id = decode_operand_at(c->ip + 2);
 
-    auto checked_uv_ref = context_get_upvalue(c, uv_cid, uv_local_reg);
-
-    if (!checked_uv_ref) {
-        c->flags = nl_ctxf_err_ref;
-
-        return;
-    }
+    auto checked_uv_ref = context_get_upvalue(c, uv_id);
 
     c->stack_bp[dest_reg] = *checked_uv_ref;
-    c->ip += 6;
+    c->ip += 4;
 
     TAILCALL
     return dispatch_op(c);
@@ -262,17 +252,11 @@ void op_ld_upval(context* c) {
 void op_sto_upval(context* c) {
     c->ip++;
 
-    const auto uv_local_reg = decode_operand_at(c->ip);
-    const auto uv_cid = decode_operand_at(c->ip + 2);
-    const auto src_reg = decode_operand_at(c->ip + 4);
+    const auto dest_uv_id = decode_operand_at(c->ip);
+    const auto src_reg = decode_operand_at(c->ip + 2);
 
-    if (!context_set_upvalue(c, uv_cid, uv_local_reg, c->stack_bp[src_reg])) {
-        c->flags = nl_ctxf_err_ref;
-
-        return;
-    }
-
-    c->ip += 6;
+    context_set_upvalue(c, dest_uv_id, c->stack_bp[src_reg]);
+    c->ip += 4;
 
     TAILCALL
     return dispatch_op(c);

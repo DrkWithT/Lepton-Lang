@@ -100,9 +100,8 @@ float context_convert_to_f32(const context* c, value v);
 bool context_test_equality(const context* c, value lhs, value rhs);
 
 [[nodiscard]]
-const value* context_get_upvalue(const context* c, uint16_t cid, uint16_t local_reg);
+const value* context_get_upvalue(const context* c, uint16_t id);
 
-[[nodiscard]]
-bool context_set_upvalue(context* c, uint16_t uv_cid, uint16_t uv_local_reg, value v);
+void context_set_upvalue(context* c, uint16_t id, value v);
 
 void context_close_upvalues(context* c, int32_t closure_id);

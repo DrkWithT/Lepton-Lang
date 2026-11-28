@@ -7,6 +7,7 @@
 static constexpr size_t bcc_initial_chunk_cap_v = 24;
 static constexpr size_t bcc_initial_chunk_k_cap_v = 8;
 static constexpr size_t bcc_initial_chunk_ic_cap_v = 4;
+static constexpr size_t bcc_initial_chunk_upval_cap_v = 4;
 static constexpr size_t bcc_initial_chunk_var_ent_cap_v = 4;
 static constexpr size_t bcc_bc_byte_sz = sizeof(uint8_t);
 static constexpr uint16_t bcc_bc_max_cap_v = 0xffff;
@@ -142,6 +143,7 @@ uint16_t bcc_start_chunk(bcc_state* bcc) {
     const uint16_t next_cid = bcc->chunks.n;
 
     chunk next_chunk = {
+        .upval_entries = calloc(bcc_initial_chunk_upval_cap_v, sizeof(uint32_t)),
         .bc = calloc(bcc_initial_chunk_cap_v, bcc_bc_byte_sz),
         .code_cap = bcc_initial_chunk_cap_v,
         .code_len = 0,
@@ -152,6 +154,8 @@ uint16_t bcc_start_chunk(bcc_state* bcc) {
         .ic_cap = bcc_initial_chunk_ic_cap_v,
         .ic_len = 0,
         .regs_n = 0,
+        .upvals_n = 0,
+        .upvals_cap = bcc_initial_chunk_upval_cap_v,
         .arity = 0,
     };
 
@@ -305,42 +309,6 @@ uint16_t nl_bcc_place_ic(bcc_state* bcc, ic temp_ic) {
     return next_ic_len;
 }
 
-void bcc_patch_upvals_n(bcc_state* bcc) {
-    const symscope* curr_scope = dynbuf_last(&bcc->scopes);
-    const syminfo* const curr_infos = curr_scope->infos.data;
-    chunk* curr_chunk = dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
-    const uint16_t curr_infos_n = curr_scope->infos.n;
-
-    uint32_t* upval_metadata = calloc(4, sizeof(uint32_t));
-    uint16_t upval_cap = 4;
-    uint16_t upval_count = 0;
-
-    for (uint16_t curr_info_pos = 0; curr_info_pos < curr_infos_n; curr_info_pos++) {
-        if ((curr_infos + curr_info_pos)->tag == nl_bcc_sym_foreign_local) {
-            const auto curr_upval_cid = (curr_infos + curr_info_pos)->cid;
-            const uint16_t curr_upval_slot = (curr_infos + curr_info_pos)->n;
-
-            if (upval_count >= upval_cap) {
-                const uint16_t upval_cap_2 = (3 * upval_cap) / 2;
-                uint32_t* upval_metadata_2 = realloc(upval_metadata, sizeof(uint32_t) * upval_cap_2);
-
-                if (!upval_metadata_2) {
-                    NL_PANIC("Failed to grow buffer of upvalue data here.", __FILE__, __LINE__)
-                }
-
-                upval_metadata = upval_metadata_2;
-                upval_cap = upval_cap_2;
-            }
-
-            upval_metadata[upval_count] = curr_upval_cid | (curr_upval_slot << 16);
-            upval_count++;
-        }
-    }
-
-    curr_chunk->upval_entries = upval_metadata;
-    curr_chunk->upvals_n = upval_count;
-}
-
 void bcc_start_scope(bcc_state* bcc, str scope_name) {
     symscope next_scope = {
         .infos = dynbuf_new(sizeof(syminfo), 8, nullptr),
@@ -385,11 +353,11 @@ int32_t bcc_normalize_to_local_reg(bcc_state* bcc, bcc_result r) {
 
     if (r_tag == nl_bcc_sym_local_r) {
         return r.n;
-    } else if (r_tag == nl_bcc_sym_foreign_local) {
+    } else if (r_tag == nl_bcc_sym_upvalue) {
         const auto temp_local_r = bcc->top_reg++;
 
         bcc_update_curr_rc(bcc, bcc->top_reg);
-        bcc_emit_inst_ternary(bcc, nl_op_ld_upval, temp_local_r, r.n, r.cid);
+        bcc_emit_inst_binary(bcc, nl_op_ld_upval, temp_local_r, r.n);
 
         return temp_local_r;
     }
@@ -567,18 +535,42 @@ const syminfo* bcc_record_local(bcc_state* bcc, str name) {
     }, 'L');
 }
 
-void bcc_record_upval_info(bcc_state* bcc, const syminfo* uv_info) {
-    auto curr_scope = (symscope*) dynbuf_last_mut(&bcc->scopes);
-    const syminfo* info_it = curr_scope->infos.data;
-    const syminfo* const info_end = info_it + curr_scope->infos.n;
+[[nodiscard]]
+uint16_t bcc_record_upval_info(bcc_state* bcc, const syminfo* uv_info) {
+    chunk* const curr_chunk = dynbuf_get_mut(&bcc->chunks, bcc->curr_cid);
+    uint32_t* encoded_upvalue_datas = curr_chunk->upval_entries;
+    const uint16_t encoded_upvalue_n = curr_chunk->upvals_n;
 
-    for (; info_it != info_end; info_it++) {
-        if (info_it->tag == nl_bcc_sym_foreign_local && info_it->cid == uv_info->cid && info_it->n == uv_info->n) {
-            return;
+    for (uint16_t upvalue_scan_pos = 0; upvalue_scan_pos < encoded_upvalue_n; upvalue_scan_pos++) {
+        // ? For compile-time recording: chunk-id is in lower 2 bytes AND foreign-slot-id is in upper 2 bytes...
+        if ((uint16_t) (encoded_upvalue_datas[upvalue_scan_pos] & 0x0000ffff) == uv_info->cid && (uint16_t) ((encoded_upvalue_datas[upvalue_scan_pos] & 0xffff0000) >> 16) == uv_info->n) {
+            return upvalue_scan_pos;
         }
     }
 
-    return (void) bcc_push_symbol_to(bcc, *uv_info, 'L');
+    const uint16_t upvalue_id = bcc_push_symbol_to(bcc, (syminfo) {
+        .name = uv_info->name,
+        .n = curr_chunk->upvals_n++,
+        .cid = bcc->curr_cid,
+        .tag = nl_bcc_sym_upvalue
+    }, 'L')->n;
+    const uint16_t upvalue_cap = curr_chunk->upvals_cap;
+    const uint16_t new_upvalue_cap = 2 * upvalue_cap;
+
+    if (upvalue_id >= upvalue_cap) {
+        uint32_t* new_upvalue_datas = realloc(curr_chunk->upval_entries, sizeof(uint32_t) * new_upvalue_cap);
+
+        if (!new_upvalue_datas) {
+            NL_PANIC("Failed to grow chunk.upvalue_entries here.", __FILE__, __LINE__)
+        }
+
+        curr_chunk->upval_entries = new_upvalue_datas;
+        curr_chunk->upvals_cap = new_upvalue_cap;
+    }
+
+    curr_chunk->upval_entries[upvalue_id] = (uint32_t) (uv_info->cid) | (uint32_t) ((uv_info->n) << 16);
+
+    return upvalue_id;
 }
 
 [[nodiscard]]
@@ -615,32 +607,30 @@ bcc_result bcc_preemit_identifier(bcc_state* bcc, const str* identifier, uint16_
         }
     } else if ((found_named_info = bcc_lookup_symbol(bcc, ident_str, nl_bcc_sym_local_r, 'B')) != nullptr) {
         if (!bcc_flag_check_n(flags, (uint16_t[]) { nl_bcc_cf_in_of_lhs }, 1)) {
-            bcc_emit_inst_ternary(bcc, nl_op_ld_upval, bcc->top_reg, found_named_info->n, found_named_info->cid);
+            const auto upvalue_id = bcc_record_upval_info(bcc, found_named_info);
+
+            bcc_emit_inst_binary(bcc, nl_op_ld_upval, bcc->top_reg, upvalue_id);
 
             actual_info.n = bcc->top_reg++;
             actual_info.cid = bcc->curr_cid;
             actual_info.tag = nl_bcc_sym_local_r;
-
-            if (found_named_info->cid != bcc->curr_cid) {
-                const syminfo temp_upval_info = {
-                    .name = found_named_info->name,
-                    .n = found_named_info->n,
-                    .cid = found_named_info->cid,
-                    .tag = nl_bcc_sym_foreign_local
-                };
-
-                bcc_record_upval_info(bcc, &temp_upval_info);
-            }
-        } else if (found_named_info->cid == bcc->curr_cid) {
+        }
+        /*else if (found_named_info->cid == bcc->curr_cid) {
             actual_info.n = bcc->top_reg++;
             actual_info.cid = bcc->curr_cid;
             actual_info.tag = nl_bcc_sym_local_r;
-        } else {
+        }*/
+        else {
             actual_info.n = found_named_info->n;
             actual_info.cid = found_named_info->cid;
+            // ! dud tag unused otherwise...
             actual_info.tag = nl_bcc_sym_foreign_local;
 
-            bcc_record_upval_info(bcc, &actual_info);
+            const auto non_rhs_upvalue_id = bcc_record_upval_info(bcc, &actual_info);
+
+            actual_info.n = non_rhs_upvalue_id;
+            actual_info.cid = bcc->curr_cid;
+            actual_info.tag = nl_bcc_sym_upvalue;
         }
     }
 
@@ -842,9 +832,6 @@ bcc_result bcc_emit_expr_func(bcc_state* bcc, const ast_node* node, uint16_t fla
     // ! Put trailing `ret` in case the user forgets to put their result expression. The block emitter should always force its last (result) value into `acc` via `nl_op_ret`.
     bcc_emit_inst_nonary(bcc, nl_op_close_upvals);
     bcc_emit_inst_unary(bcc, nl_op_ret, checked_body_result.n);
-
-    // ! Pre-count upvalues of chunk / function.
-    bcc_patch_upvals_n(bcc);
 
     string_del(&internal_lambda_name);
     bcc_end_scope(bcc);
@@ -1074,8 +1061,8 @@ bcc_result bcc_emit_expr_call(bcc_state* bcc, const ast_node* node, uint16_t fla
         accr_spill_reg = bcc->top_reg;
 
         bcc_update_curr_rc(bcc, bcc->top_reg++);
-    } else if (callee_emit_result.domain == nl_bcc_sym_foreign_local) {
-        bcc_emit_inst_ternary(bcc, nl_op_ld_upval, bcc->top_reg, callee_emit_result.n, callee_emit_result.cid);
+    } else if (callee_emit_result.domain == nl_bcc_sym_upvalue) {
+        bcc_emit_inst_binary(bcc, nl_op_ld_upval, bcc->top_reg, callee_emit_result.n);
         bcc_emit_inst_unary(bcc, nl_op_call, bcc->top_reg++);
 
         accr_spill_reg = bcc->top_reg;
@@ -1294,9 +1281,9 @@ bcc_result bcc_emit_expr_assign(bcc_state* bcc, const ast_node* node, uint16_t f
     
         bcc_update_curr_rc(bcc, src_reg + 1);
         bcc->top_reg = dest_reg + 1;
-    } else if (dest_result.domain == nl_bcc_sym_foreign_local) {
+    } else if (dest_result.domain == nl_bcc_sym_upvalue) {
         if (assign_runtime_op == nl_op_mov_rr) {
-            bcc_emit_inst_ternary(bcc, nl_op_sto_upval, dest_result.n, dest_result.cid, src_reg);
+            bcc_emit_inst_binary(bcc, nl_op_sto_upval, dest_result.n, src_reg);
         } else {
             // todo: support upvalue in-place MDAS opcodes...
             bcc_report_err(bcc, "Compound assignment operators are unsupported for captured names.", bcc->line, bcc->col);

@@ -229,7 +229,7 @@ bool context_try_invoke(context* c, value callee, int32_t maybe_self_id, uint16_
         return false;
     }
 
-    const chunk* const caller_chunk = dynbuf_get(&c->chunks, ((const context_frame*) dynbuf_last_unchecked(&c->frames))->cid);
+    const chunk* const caller_chunk = dynbuf_get_unchecked(&c->chunks, ((const context_frame*) dynbuf_last_unchecked(&c->frames))->cid);
     closure* target_closure = ent_pool_get_mut_unchecked(&c->pool_c, callee.n).p;
 
     {
@@ -523,36 +523,16 @@ bool context_test_equality(const context* c, value lhs, value rhs) {
 }
 
 [[nodiscard]]
-const value* context_get_upvalue(const context* c, uint16_t uv_cid, uint16_t uv_local_reg) {
+const value* context_get_upvalue(const context* c, uint16_t uv_id) {
     const closure* const callee = ent_pool_get_unchecked(&c->pool_c, ((const context_frame*) dynbuf_last_unchecked(&c->frames))->closure_id).p;
 
-    const upvalue* callee_upvalue_it = callee->upvals;
-    const upvalue* const callee_upvalue_end = callee->upvals + callee->upvals_cap;
-
-    for (; callee_upvalue_it != callee_upvalue_end; callee_upvalue_it++) {
-        if (callee_upvalue_it->cid == uv_cid && callee_upvalue_it->id == uv_local_reg) {
-            return callee_upvalue_it->ref;
-        }
-    }
-
-    return nullptr;
+    return callee->upvals[uv_id].ref;
 }
 
-[[nodiscard]]
-bool context_set_upvalue(context* c, uint16_t uv_cid, uint16_t uv_local_reg, value v) {
+void context_set_upvalue(context* c, uint16_t uv_id, value v) {
     closure* const callee = ent_pool_get_mut(&c->pool_c, ((const context_frame*) dynbuf_last_unchecked(&c->frames))->closure_id).p;
 
-    upvalue* callee_upvalue_it = callee->upvals;
-    upvalue* const callee_upvalue_end = callee->upvals + callee->upvals_cap;
-
-    for (; callee_upvalue_it != callee_upvalue_end; callee_upvalue_it++) {
-        if (callee_upvalue_it->cid == uv_cid && callee_upvalue_it->id == uv_local_reg) {
-            *callee_upvalue_it->ref = v;
-            return true;
-        }
-    }
-
-    return false;
+    callee->upvals[uv_id].ref[0] = v;
 }
 
 void context_close_upvalues(context* c, int32_t closure_id) {

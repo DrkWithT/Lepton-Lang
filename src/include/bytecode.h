@@ -24,8 +24,8 @@ typedef enum nl_op_t : uint8_t {
     nl_op_mov_rg,       // mov_global dest <global-ID>
     nl_op_sto_arg,      // mov_arg_slot <arg-ID (up to 255)> src
     nl_op_ld_arg,       // load_arg_slot dest <arg-ID>
-    nl_op_ld_upval,     // load_upvar dest <upval-ID> <upval-CID>
-    nl_op_sto_upval,    // store_upvar <upval-ID> <upval-CID> src
+    nl_op_ld_upval,     // load_upvar dest <chunk-upval-ID>
+    nl_op_sto_upval,    // store_upvar <chunk-upval-ID> src
     nl_op_close_upvals, // close_upvalues
     nl_op_use_ic,       // use_ic <ID>
     nl_op_inst_trait,   // inst_trait dest trait-obj-var-src, prop-count
@@ -75,6 +75,7 @@ typedef struct nl_chunk_t {
     uint16_t ic_cap;
     uint16_t regs_n;
     uint16_t upvals_n;
+    uint16_t upvals_cap;
     uint8_t arity;
 } chunk;
 

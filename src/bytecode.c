@@ -176,12 +176,14 @@ void inst_output(FILE* os, const uint8_t* ip, uint8_t arity) {
 }
 
 void chunk_output(FILE* os, const chunk* c) {
-    const value* chunk_consts = c->kd;
-    const auto chunk_consts_len = c->k_len;
-    const uint8_t* chunk_bc = c->bc;
+    const value* const chunk_consts = c->kd;
+    const uint8_t* const chunk_bc = c->bc;
+    const uint32_t* const chunk_upvals = c->upval_entries;
     const auto chunk_bc_len = c->code_len;
+    const auto chunk_consts_len = c->k_len;
+    const auto chunk_upvals_len = c->upvals_n;
 
-    fprintf(os, "\n---- STATS ----\n\nregister-window: %u\n", c->regs_n);
+    fprintf(os, "\n---- STATS ----\n\nregister-window: %u\nupvalues-count: %u\n", c->regs_n, chunk_upvals_len);
 
     fprintf(os, "\n---- CONSTANTS ----\n");
 
@@ -189,6 +191,16 @@ void chunk_output(FILE* os, const chunk* c) {
         fprintf(os, "K_%u: ", k_id);
         value_output(os, chunk_consts[k_id]);
         fprintf(os, "\n");
+    }
+
+    fprintf(os, "\n---- UPVAL_RECORDS ----\n");
+
+    for (uint16_t uv_id = 0; uv_id < chunk_upvals_len; uv_id++) {
+        fprintf(os, "UpVal_%u: Ch%u-Rg%u\n",
+            uv_id,
+            (chunk_upvals[uv_id] & 0x0000ffff),
+            (chunk_upvals[uv_id] & 0xffff0000) >> 16
+        );
     }
 
     fprintf(os, "\n---- CODE ----\n");
@@ -207,8 +219,8 @@ void chunk_output(FILE* os, const chunk* c) {
             case nl_op_mov_rg: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
             case nl_op_sto_arg: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
             case nl_op_ld_arg: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
-            case nl_op_ld_upval: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
-            case nl_op_sto_upval: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;
+            case nl_op_ld_upval: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
+            case nl_op_sto_upval: inst_output(os, chunk_bc + bc_byte_pos, 2); bc_byte_pos += bc_binary_stride_v; break;
             case nl_op_close_upvals: inst_output(os, chunk_bc + bc_byte_pos, 0); bc_byte_pos++; break;
             case nl_op_use_ic: inst_output(os, chunk_bc + bc_byte_pos, 1); bc_byte_pos += bc_unary_stride_v; break;
             case nl_op_inst_trait: inst_output(os, chunk_bc + bc_byte_pos, 3); bc_byte_pos += bc_ternary_stride_v; break;

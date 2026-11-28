@@ -16,7 +16,8 @@ typedef enum nl_bcc_symtag_t : uint8_t {
     nl_bcc_sym_k,               // constant `value`
     nl_bcc_sym_global_k,
     nl_bcc_sym_local_r,
-    nl_bcc_sym_foreign_local
+    nl_bcc_sym_foreign_local,
+    nl_bcc_sym_upvalue
 } symtag;
 
 typedef struct nl_bcc_syminfo_t {
