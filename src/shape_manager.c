@@ -162,7 +162,16 @@ shape* shm_get_shape_mut(shm* sm, int32_t shid) {
 
 [[nodiscard]]
 const shape_transitions* shm_get_shape_transits(const shm* sm, int32_t shid) {
-    if (shid <= nl_dud_shape_id || shid > sm->max_id) {
+    if (shid <= nl_dud_shape_id || shid >= sm->max_id) {
+        return nullptr;
+    }
+
+    return sm->transits + shid;
+}
+
+[[nodiscard]]
+shape_transitions* shm_get_mut_shape_transits(shm* sm, int32_t shid) {
+    if (shid <= nl_dud_shape_id || shid >= sm->max_id) {
         return nullptr;
     }
 

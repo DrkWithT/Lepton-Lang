@@ -64,7 +64,7 @@ void context_del(context* c);
 [[nodiscard]]
 value context_try_closurify(context* c, uint16_t chunk_id);
 
-bool context_try_invoke(context* c, value callee, int32_t maybe_self_id);
+bool context_try_invoke(context* c, value callee, int32_t maybe_self_id, uint16_t ret_ip_nudge);
 
 bool context_try_invoke_method(context* c, value caller_obj, int16_t prop_method_id);
 

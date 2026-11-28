@@ -600,7 +600,7 @@ void op_lt(context* c) {
     c->stack_bp[dest_reg] = (value) {
         .b = context_convert_to_f32(c, c->stack_bp[a1_reg])
             < context_convert_to_f32(c, c->stack_bp[a2_reg]),
-        .tag = nl_vtag_num
+        .tag = nl_vtag_bool
     };
     c->ip += 6;
 
@@ -618,7 +618,7 @@ void op_lte(context* c) {
     c->stack_bp[dest_reg] = (value) {
         .b = context_convert_to_f32(c, c->stack_bp[a1_reg])
             <= context_convert_to_f32(c, c->stack_bp[a2_reg]),
-        .tag = nl_vtag_num
+        .tag = nl_vtag_bool
     };
     c->ip += 6;
 
@@ -636,7 +636,7 @@ void op_gt(context* c) {
     c->stack_bp[dest_reg] = (value) {
         .b = context_convert_to_f32(c, c->stack_bp[a1_reg])
             > context_convert_to_f32(c, c->stack_bp[a2_reg]),
-        .tag = nl_vtag_num
+        .tag = nl_vtag_bool
     };
     c->ip += 6;
 
@@ -654,7 +654,7 @@ void op_gte(context* c) {
     c->stack_bp[dest_reg] = (value) {
         .b = context_convert_to_f32(c, c->stack_bp[a1_reg])
             >= context_convert_to_f32(c, c->stack_bp[a2_reg]),
-        .tag = nl_vtag_num
+        .tag = nl_vtag_bool
     };
     c->ip += 6;
 
@@ -779,7 +779,8 @@ void op_call(context* c) {
         decode_operand_at(c->ip)
     ];
 
-    if (!context_try_invoke(c, callee_v, -1)) {
+    // ! IMPORTANT: Continue at this caller after the callee runs (+ 2 to skip the operand data).
+    if (!context_try_invoke(c, callee_v, -1, 2)) {
         c->flags = nl_ctxf_err_ref;
 
         return;

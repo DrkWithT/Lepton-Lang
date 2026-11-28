@@ -9,7 +9,7 @@
 
 constexpr size_t nl_default_stack_size = 8192;
 constexpr size_t nl_default_arg_regs_n = 255;
-constexpr size_t nl_default_max_scope_depth = 64;
+constexpr size_t nl_default_max_scope_depth = 100;
 constexpr int32_t nl_ic_dud_offset = -1;
 constexpr int32_t nl_ic_entry_windows[] = {
     [nl_ics_idle] = 0,
@@ -224,7 +224,7 @@ value context_try_closurify(context* c, uint16_t chunk_id) {
     };
 }
 
-bool context_try_invoke(context* c, value callee, int32_t maybe_self_id) {
+bool context_try_invoke(context* c, value callee, int32_t maybe_self_id, uint16_t ret_ip_nudge) {
     if (callee.tag != nl_vtag_closure) {
         return false;
     }
@@ -236,7 +236,7 @@ bool context_try_invoke(context* c, value callee, int32_t maybe_self_id) {
         context_frame target_frame = {
             .caller_base_ip = c->base_ip,
             // ! IMPORTANT: skip next 2 u16 operands of current call-opcode in the caller to avoid misinterpretation
-            .caller_ip = c->ip + 4,
+            .caller_ip = c->ip + ret_ip_nudge,
             .caller_kp = c->kp,
             .caller_icaches = c->icp,
             .caller_stack_base = c->stack_bp,
@@ -299,7 +299,7 @@ bool context_try_invoke_method(context* c, value caller_obj, int16_t prop_method
 
     // ! IC Hits, so we're in "La La Land". Just use the cached offset according to the object's layout vs. a full shape lookup.
     if (ic_result_offset != nl_ic_dud_offset) {
-        return context_try_invoke(c, target_object->pvals[ic_result_offset], object_id);
+        return context_try_invoke(c, target_object->pvals[ic_result_offset], object_id, 6);
     }
 
     // ! Otherwise, we need to update the now invalidated IC with this fresh miss as entry 1. This LRU behavior MAY avoid future unlucky property lookups.
@@ -316,7 +316,7 @@ bool context_try_invoke_method(context* c, value caller_obj, int16_t prop_method
     buddy_ic->obj_offsets[0] = prop_offset;
     buddy_ic->recv_ids[0] = object_id;
 
-    return context_try_invoke(c, target_object->pvals[prop_offset], object_id);
+    return context_try_invoke(c, target_object->pvals[prop_offset], object_id, 6);
 }
 
 void context_seal_object(context* c, value object_v) {
@@ -335,11 +335,11 @@ void context_seal_object(context* c, value object_v) {
 void context_init_property(context* c, value object_v, uint16_t key_id, value initial_v) {
     // ! BCC only emits the opcode using this method in freshly created object expressions, so an unchecked lookup is sound.
     metatable* const target_object = ent_pool_get_mut_unchecked(&c->pool_o, object_v.n).p;
+    shape_transitions* target_shape_transitions_list = shm_get_mut_shape_transits(&c->shapes, target_object->shape_id);
 
     {
-        const shape_transitions* target_shape_transitions_list = shm_get_shape_transits(&c->shapes, target_object->shape_id);
         const auto target_transition_n = target_shape_transitions_list->entries_n;
-        
+
         for (uint16_t transit_pos = 0; transit_pos < target_transition_n; transit_pos++) {
             if (target_shape_transitions_list->keys[transit_pos] == key_id) {
                 // ! Shape transitions always start from blank {}, and each new transition in additive order is placed for each new property. Also, the number of properties added in such an order is already known to BCC. We only need to update the next property slot for this object.
@@ -353,7 +353,7 @@ void context_init_property(context* c, value object_v, uint16_t key_id, value in
 
     shape* const target_object_shape = shm_get_shape_mut_unchecked(&c->shapes, target_object->shape_id);
     const auto duped_object_shape_next_pos = target_object_shape->entries.n;
-    const auto duped_object_shape_cap = (duped_object_shape_next_pos > 0) ? 2 * duped_object_shape_next_pos : duped_object_shape_next_pos + 1;
+    const auto duped_object_shape_cap = duped_object_shape_next_pos + 1;
 
     NL_ALLOC_N(duped_object_shape_cap, shape_ent, duped_shape_entries_raw, __FILE__, __LINE__)
     memcpy(duped_shape_entries_raw, target_object_shape->entries.data, duped_object_shape_next_pos * sizeof(shape_ent));
@@ -363,7 +363,7 @@ void context_init_property(context* c, value object_v, uint16_t key_id, value in
         .del_fn = nullptr,
         .item_size = sizeof(shape_ent),
         .cap = duped_object_shape_cap,
-        .n = duped_object_shape_next_pos + 1
+        .n = duped_object_shape_next_pos
     };
 
     {
@@ -376,13 +376,18 @@ void context_init_property(context* c, value object_v, uint16_t key_id, value in
         dynbuf_push(&duped_shape_entries, &incoming_prop);
     }
 
-    target_object->shape_id = shm_add_shape(&c->shapes, 
+    // ! Add property slot of object and map it within the fresh shape which is interned.
+    const auto fresh_shape_id = shm_add_shape(&c->shapes, 
         &(shape) {
             .entries = duped_shape_entries,
             .id = 0
         }
     );
-    target_object->pvals[target_object->prop_n++] = initial_v;
+
+    target_object->shape_id = fresh_shape_id;
+    target_object->pvals[duped_object_shape_next_pos] = initial_v;
+
+    sht_add_transit(target_shape_transitions_list, key_id, fresh_shape_id);
 }
 
 [[nodiscard]]

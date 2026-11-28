@@ -59,7 +59,17 @@ const shape* shm_get_shape(shm* sm, int32_t shid);
 shape* shm_get_shape_mut(shm* sm, int32_t shid);
 
 [[nodiscard]]
-NL_CXX_INLINE const shape* shm_get_shape_unchecked(shm* sm, int32_t shid) {
+NL_CXX_INLINE const shape_transitions* shm_get_shape_transits_unchecked(const shm* sm, int32_t shid) {
+    return sm->transits + shid;
+}
+
+[[nodiscard]]
+NL_CXX_INLINE shape_transitions* shm_get_mut_shape_transits_unchecked(shm* sm, int32_t shid) {
+    return sm->transits + shid;
+}
+
+[[nodiscard]]
+NL_CXX_INLINE const shape* shm_get_shape_unchecked(const shm* sm, int32_t shid) {
     return sm->realm + shid;
 }
 
@@ -70,5 +80,8 @@ NL_CXX_INLINE shape* shm_get_shape_mut_unchecked(shm* sm, int32_t shid) {
 
 [[nodiscard]]
 const shape_transitions* shm_get_shape_transits(const shm* sm, int32_t shid);
+
+[[nodiscard]]
+shape_transitions* shm_get_mut_shape_transits(shm* sm, int32_t shid);
 
 const shape_transitions* shm_add_shape_transit(shm* sm, int32_t shid, uint16_t key_id, int32_t child_shid);
